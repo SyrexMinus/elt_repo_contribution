@@ -1,0 +1,18 @@
+aws_region  = "eu-central-1"
+environment = "demo"
+
+repositories      = ["apache/spark", "ClickHouse/ClickHouse"]
+ingestion_cadence = "0 */6 * * *" # 6h
+
+bronze_retention_days = 7
+monthly_budget_usd    = 10
+alert_email           = "ops@example.com"
+
+airflow_instance_type = "t3.micro"
+airflow_ssh_key_name  = "my-ec2-keypair"
+airflow_allowed_cidr  = "203.0.113.0/32" # TODO
+
+snowflake_account        = "xy12345.eu-central-1"
+snowflake_user           = "ELT_TERRAFORM"
+snowflake_role           = "SYSADMIN"
+snowflake_warehouse_size = "XSMALL"

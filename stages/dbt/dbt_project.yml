@@ -1,0 +1,16 @@
+# STUB dbt project for the Gold layer (README ch.6).
+# TODO: wire profiles.yml (Snowflake), sources (silver pull/file/review),
+#       tests (empty-increment guard), and docs.
+name: "repo_contribution"
+version: "0.1.0"
+config-version: 2
+
+profile: "repo_contribution"
+
+model-paths: ["models"]
+
+models:
+  repo_contribution:
+    gold:
+      +materialized: table
+      +schema: GOLD

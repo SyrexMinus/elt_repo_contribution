@@ -1,0 +1,10 @@
+# STUB: Silver source-of-truth tables (README ch.5), provisioned by Terraform.
+version: 2
+
+sources:
+  - name: silver
+    schema: SILVER
+    tables:
+      - name: pull
+      - name: file
+      - name: review
