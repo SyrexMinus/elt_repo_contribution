@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+test "$#" -eq 2
+image="$1"
+region="$2"
+registry="$(printf '%s' "$image" | cut -d/ -f1)"
+
+aws ecr get-login-password --region "$region" \
+  | docker login --username AWS --password-stdin "$registry"
+AIRFLOW_IMAGE="$image" docker compose -f /opt/airflow/docker-compose.yml pull
+AIRFLOW_IMAGE="$image" docker compose -f /opt/airflow/docker-compose.yml up -d --remove-orphans

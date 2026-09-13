@@ -1,0 +1,24 @@
+#cloud-config
+write_files:
+  - path: /opt/airflow/.env
+    owner: root:root
+    permissions: "0600"
+    encoding: b64
+    content: ${airflow_env}
+  - path: /opt/airflow/docker-compose.yml
+    owner: root:root
+    permissions: "0644"
+    encoding: b64
+    content: ${docker_compose}
+  - path: /usr/local/bin/bootstrap-airflow
+    owner: root:root
+    permissions: "0755"
+    encoding: b64
+    content: ${bootstrap_airflow}
+  - path: /usr/local/bin/deploy-airflow
+    owner: root:root
+    permissions: "0755"
+    encoding: b64
+    content: ${deploy_airflow}
+runcmd:
+  - [/usr/local/bin/bootstrap-airflow]
