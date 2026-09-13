@@ -1,7 +1,7 @@
 variable "prefix" {
-  type        = string
+  type = string
 }
 
 variable "bucket_arns" {
-  type        = list(string)
+  type = list(string)
 }

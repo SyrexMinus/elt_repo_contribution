@@ -15,7 +15,6 @@ resource "aws_iam_policy" "s3_access" {
 }
 
 
-TODO нахера
 data "aws_iam_policy_document" "ec2_assume" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -50,10 +49,12 @@ resource "aws_iam_policy" "cloudwatch_put_metrics" {
   })
 }
 
+
 resource "aws_iam_role_policy_attachment" "airflow_cw" {
   role       = aws_iam_role.airflow.name
   policy_arn = aws_iam_policy.cloudwatch_put_metrics.arn
 }
+
 
 resource "aws_iam_policy" "emr_serverless_invoke" {
   name = "${var.prefix}-emr-invoke"
@@ -67,15 +68,30 @@ resource "aws_iam_policy" "emr_serverless_invoke" {
   })
 }
 
+
 resource "aws_iam_role_policy_attachment" "airflow_emr" {
   role       = aws_iam_role.airflow.name
   policy_arn = aws_iam_policy.emr_serverless_invoke.arn
 }
 
+
+resource "aws_iam_role_policy_attachment" "airflow_ecr" {
+  role       = aws_iam_role.airflow.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+
+resource "aws_iam_role_policy_attachment" "airflow_ssm" {
+  role       = aws_iam_role.airflow.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+
 resource "aws_iam_instance_profile" "airflow" {
   name = "${var.prefix}-airflow"
   role = aws_iam_role.airflow.name
 }
+
 
 data "aws_iam_policy_document" "emr_assume" {
   statement {
@@ -92,10 +108,12 @@ resource "aws_iam_role" "spark_execution" {
   assume_role_policy = data.aws_iam_policy_document.emr_assume.json
 }
 
+
 resource "aws_iam_role_policy_attachment" "spark_s3" {
   role       = aws_iam_role.spark_execution.name
   policy_arn = aws_iam_policy.s3_access.arn
 }
+
 
 resource "aws_iam_role_policy_attachment" "spark_cw" {
   role       = aws_iam_role.spark_execution.name
