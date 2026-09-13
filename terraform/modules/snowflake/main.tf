@@ -7,19 +7,6 @@ resource "snowflake_schema" "silver" {
   name     = "SILVER"
 }
 
-resource "snowflake_schema" "gold" {
-  database = snowflake_database.this.name
-  name     = "GOLD"
-}
-
-resource "snowflake_warehouse" "this" {
-  name                = "${var.prefix}_WH"
-  warehouse_size      = var.warehouse_size
-  auto_suspend        = 60
-  auto_resume         = true
-  initially_suspended = true
-}
-
 resource "snowflake_table" "pull" {
   database = snowflake_database.this.name
   schema   = snowflake_schema.silver.name
@@ -119,4 +106,17 @@ resource "snowflake_table" "review" {
     name = "PARSE_RUN_ID"
     type = "STRING"
   }
+}
+
+resource "snowflake_schema" "gold" {
+  database = snowflake_database.this.name
+  name     = "GOLD"
+}
+
+resource "snowflake_warehouse" "this" {
+  name                = "${var.prefix}_WH"
+  warehouse_size      = var.warehouse_size
+  auto_suspend        = 60
+  auto_resume         = true
+  initially_suspended = true
 }

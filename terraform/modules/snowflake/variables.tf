@@ -1,8 +1,7 @@
 variable "prefix" {
-  type        = string
+  type = string
 }
 
 variable "warehouse_size" {
-  type        = string
-  default     = "XSMALL"
+  type = string
 }
