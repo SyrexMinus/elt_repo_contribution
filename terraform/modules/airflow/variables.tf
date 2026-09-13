@@ -50,3 +50,11 @@ variable "artifacts_bucket" {
 variable "spark_application_id" {
   type = string
 }
+
+variable "spark_execution_role_arn" {
+  type = string
+}
+
+variable "silver_job_s3_uri" {
+  type = string
+}

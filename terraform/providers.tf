@@ -3,7 +3,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project     = "elt-repo-contribution"
+      Project     = var.name_prefix
       Environment = var.environment
       ManagedBy   = "terraform"
     }

@@ -15,24 +15,29 @@ module "iam" {
 }
 
 module "spark" {
-  source             = "./modules/spark"
-  prefix             = local.prefix
-  execution_role_arn = module.iam.spark_execution_role_arn
-  artifacts_bucket   = module.s3.artifacts_bucket_name
+  source           = "./modules/spark"
+  prefix           = local.prefix
+  artifacts_bucket = module.s3.artifacts_bucket_name
 }
 
 module "airflow" {
-  source               = "./modules/airflow"
-  prefix               = local.prefix
-  instance_type        = var.airflow_instance_type
-  ssh_key_name         = var.airflow_ssh_key_name
-  allowed_cidr         = var.airflow_allowed_cidr
-  instance_profile     = module.iam.airflow_instance_profile_name
-  ingestion_cadence    = var.ingestion_cadence
-  repositories         = var.repositories
-  bronze_bucket        = module.s3.bronze_bucket_name
-  artifacts_bucket     = module.s3.artifacts_bucket_name
-  spark_application_id = module.spark.application_id
+  source                   = "./modules/airflow"
+  prefix                   = local.prefix
+  aws_region               = var.aws_region
+  image                    = var.airflow_image
+  instance_type            = var.airflow_instance_type
+  ssh_key_name             = var.airflow_ssh_key_name
+  allowed_cidr             = var.airflow_allowed_cidr
+  instance_profile         = module.iam.airflow_instance_profile_name
+  ingestion_cadence        = var.ingestion_cadence
+  repositories             = var.repositories
+  bronze_bucket            = module.s3.bronze_bucket_name
+  artifacts_bucket         = module.s3.artifacts_bucket_name
+  spark_application_id     = module.spark.application_id
+  spark_execution_role_arn = module.iam.spark_execution_role_arn
+  silver_job_s3_uri        = module.spark.silver_job_s3_uri
+
+  depends_on = [module.iam]
 }
 
 module "snowflake" {
@@ -46,4 +51,5 @@ module "cloudwatch" {
   prefix             = local.prefix
   alert_email        = var.alert_email
   monthly_budget_usd = var.monthly_budget_usd
+  metric_namespace   = "EltRepoContribution"
 }

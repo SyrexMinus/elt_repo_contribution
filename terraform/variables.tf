@@ -1,74 +1,68 @@
 variable "aws_region" {
-  type        = string
-  default     = "eu-central-1"
+  type = string
 }
 
 variable "environment" {
-  type        = string
-  default     = "demo"
+  type = string
 }
 
 variable "name_prefix" {
-  type        = string
-  default     = "elt-repo-contribution"
+  type = string
 }
 
 variable "repositories" {
-  type        = list(string)
-  default     = ["apache/spark", "ClickHouse/ClickHouse"]
+  type = list(string)
 }
 
 variable "ingestion_cadence" {
-  type        = string
-  default     = "0 */6 * * *"
+  type = string
 }
 
 variable "bronze_retention_days" {
-  type        = number
-  default     = 7
+  type = number
 }
 
 variable "monthly_budget_usd" {
-  type        = number
-  default     = 10
+  type = number
 }
 
 variable "alert_email" {
-  type        = string
-  default     = ""
+  type = string
+
+  validation {
+    condition     = can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.alert_email))
+    error_message = "alert_email must be a valid non-empty email address"
+  }
 }
 
 variable "airflow_instance_type" {
-  type        = string
-  default     = "t3.micro"
+  type = string
+}
+
+variable "airflow_image" {
+  type = string
 }
 
 variable "airflow_ssh_key_name" {
-  type        = string
-  default     = ""
+  type = string
 }
 
 variable "airflow_allowed_cidr" {
-  type        = string
-  default     = "0.0.0.0/0"
+  type = string
 }
 
 variable "snowflake_account" {
-  type        = string
-  default     = ""
+  type = string
 }
 
 variable "snowflake_user" {
-  type        = string
-  default     = ""
+  type = string
 }
 
 variable "snowflake_role" {
-  type        = string
-  default     = "SYSADMIN"
+  type = string
 }
 
 variable "snowflake_warehouse_size" {
-  type        = string
-  default     = "XSMALL"
+  type = string
 }

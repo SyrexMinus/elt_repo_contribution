@@ -6,7 +6,7 @@ pipeline-artifacts/{run_id}/{stage}/output.parquet.
 
 Config comes from env (set by Terraform user_data / .env):
   INGESTION_CADENCE, REPOSITORIES, BRONZE_BUCKET, ARTIFACTS_BUCKET,
-  SPARK_APPLICATION_ID.
+  SPARK_APPLICATION_ID, SPARK_EXECUTION_ROLE_ARN, SILVER_JOB_S3_URI.
 
 TODO: replace PythonOperator stubs with real poller invocation, EMR Serverless
       StartJobRun for Silver, and dbt run for Gold; wire freshness/empty-increment

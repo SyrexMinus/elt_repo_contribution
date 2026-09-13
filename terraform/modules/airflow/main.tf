@@ -37,11 +37,13 @@ resource "aws_security_group" "airflow" {
 locals {
   user_data = templatefile("${path.module}/templates/user_data.yaml.tftpl", {
     airflow_env = base64encode(templatefile("${path.module}/templates/airflow.env.tftpl", {
-      ingestion_cadence    = var.ingestion_cadence
-      repositories         = join(",", var.repositories)
-      bronze_bucket        = var.bronze_bucket
-      artifacts_bucket     = var.artifacts_bucket
-      spark_application_id = var.spark_application_id
+      ingestion_cadence        = var.ingestion_cadence
+      repositories             = join(",", var.repositories)
+      bronze_bucket            = var.bronze_bucket
+      artifacts_bucket         = var.artifacts_bucket
+      spark_application_id     = var.spark_application_id
+      spark_execution_role_arn = var.spark_execution_role_arn
+      silver_job_s3_uri        = var.silver_job_s3_uri
     }))
     bootstrap_airflow = filebase64("${path.module}/files/bootstrap-airflow")
     deploy_airflow    = filebase64("${path.module}/files/deploy-airflow")

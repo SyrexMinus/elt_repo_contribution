@@ -9,6 +9,10 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+!/build/
+/build/*
+!/build/airflow/
+!/build/airflow/**
 develop-eggs/
 dist/
 downloads/

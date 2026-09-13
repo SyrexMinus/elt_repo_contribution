@@ -1,5 +1,6 @@
 aws_region  = "eu-central-1"
 environment = "demo"
+name_prefix = "elt-repo-contribution"
 
 repositories      = ["apache/spark", "ClickHouse/ClickHouse"]
 ingestion_cadence = "0 */6 * * *" # 6h
@@ -9,6 +10,7 @@ monthly_budget_usd    = 10
 alert_email           = "ops@example.com"
 
 airflow_instance_type = "t3.micro"
+airflow_image         = "123456789012.dkr.ecr.eu-central-1.amazonaws.com/elt-repo-contribution-airflow@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 airflow_ssh_key_name  = "my-ec2-keypair"
 airflow_allowed_cidr  = "203.0.113.0/32" # TODO
 
