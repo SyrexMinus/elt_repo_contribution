@@ -7,5 +7,5 @@ output "artifacts_bucket_name" {
 }
 
 output "bucket_arns" {
-  value       = [aws_s3_bucket.bronze.arn, aws_s3_bucket.artifacts.arn]
+  value = [aws_s3_bucket.bronze.arn, aws_s3_bucket.artifacts.arn]
 }

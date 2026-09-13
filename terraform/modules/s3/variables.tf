@@ -1,7 +1,7 @@
 variable "prefix" {
-  type        = string
+  type = string
 }
 
 variable "bronze_retention_days" {
-  type        = number
+  type = number
 }
