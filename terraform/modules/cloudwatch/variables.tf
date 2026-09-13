@@ -1,17 +1,15 @@
 variable "prefix" {
-  type        = string
+  type = string
 }
 
 variable "alert_email" {
-  type        = string
-  default     = ""
+  type = string
 }
 
 variable "monthly_budget_usd" {
-  type        = number
+  type = number
 }
 
 variable "metric_namespace" {
-  type        = string
-  default     = "EltRepoContribution"
+  type = string
 }
