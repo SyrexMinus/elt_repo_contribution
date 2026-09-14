@@ -15,6 +15,6 @@ Writes:
 """
 
 
-def handler(event, context):
+def poller(event, s3, github, cloudwatch):
     # TODO: implement incremental/backfill polling, batching, quarantine, metrics.
     raise NotImplementedError("poller stage not implemented")
