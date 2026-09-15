@@ -1,14 +1,16 @@
+from __future__ import annotations
+
 import io
 import json
 from pathlib import Path
+from typing import Any, BinaryIO, Literal
 from unittest import TestCase
 from urllib.parse import parse_qs, urlencode, urlsplit
 
-import pyarrow.parquet as parquet
 import requests
+from pyarrow import parquet
 
 from stages.poller.poller import poller
-
 
 REPOSITORY = "salute-developers/smart_app_framework"
 BRONZE_BUCKET = "bronze-bucket"
@@ -18,7 +20,7 @@ STATE_KEY = f"poller-state/{REPOSITORY}.json"
 
 
 class PollerTest(TestCase):
-    def test_poller_writes_incremental_artifacts(self):
+    def test_poller_writes_incremental_artifacts(self) -> None:
         run_id = "incremental-run"
         event = _event(
             run_id=run_id,
@@ -128,15 +130,12 @@ class PollerTest(TestCase):
                 "run_id": run_id,
                 "repo": REPOSITORY,
                 "s3_uri": (
-                    f"s3://{BRONZE_BUCKET}/{REPOSITORY}/{run_id}/"
-                    "batch-00000.jsonl"
+                    f"s3://{BRONZE_BUCKET}/{REPOSITORY}/{run_id}/batch-00000.jsonl"
                 ),
             },
         )
         self.assertGreaterEqual(
-            sum(
-                record["pull_request_count"] for record in artifact_records
-            ),
+            sum(record["pull_request_count"] for record in artifact_records),
             45,
         )
         self.assertGreaterEqual(
@@ -178,7 +177,7 @@ class PollerTest(TestCase):
             corrupted_count=0,
         )
 
-    def test_poller_writes_complete_history_for_backfill_mode(self):
+    def test_poller_writes_complete_history_for_backfill_mode(self) -> None:
         run_id = "backfill-run"
         event = _event(
             run_id=run_id,
@@ -244,15 +243,12 @@ class PollerTest(TestCase):
                 "run_id": run_id,
                 "repo": REPOSITORY,
                 "s3_uri": (
-                    f"s3://{BRONZE_BUCKET}/{REPOSITORY}/{run_id}/"
-                    "batch-00000.jsonl"
+                    f"s3://{BRONZE_BUCKET}/{REPOSITORY}/{run_id}/batch-00000.jsonl"
                 ),
             },
         )
         self.assertGreaterEqual(
-            sum(
-                record["pull_request_count"] for record in artifact_records
-            ),
+            sum(record["pull_request_count"] for record in artifact_records),
             230,
         )
         self.assertGreaterEqual(
@@ -293,7 +289,9 @@ class PollerTest(TestCase):
             corrupted_count=0,
         )
 
-    def test_poller_writes_empty_artifact_when_increment_has_no_changes(self):
+    def test_poller_writes_empty_artifact_when_increment_has_no_changes(
+        self,
+    ) -> None:
         run_id = "empty-run"
         watermark = "2026-09-10T00:00:00Z"
         state = {
@@ -305,9 +303,7 @@ class PollerTest(TestCase):
         state_body = _json_bytes(state)
         s3 = _S3({(ARTIFACTS_BUCKET, STATE_KEY): state_body})
         cloudwatch = _CloudWatch()
-        github = _GitHub(
-            {(_path("pulls"), 1): _Reply([])}
-        )
+        github = _GitHub({(_path("pulls"), 1): _Reply([])})
 
         result = poller(
             event=_event(
@@ -351,7 +347,7 @@ class PollerTest(TestCase):
             corrupted_count=0,
         )
 
-    def test_poller_quarantines_corrupted_response(self):
+    def test_poller_quarantines_corrupted_response(self) -> None:
         cases = {
             "non-200": _Reply(
                 payload={"message": "server error"},
@@ -385,9 +381,7 @@ class PollerTest(TestCase):
                         cloudwatch=cloudwatch,
                     )
 
-                quarantine_key = (
-                    f"corrupted-artifacts/{run_id}/stage1/output.parquet"
-                )
+                quarantine_key = f"corrupted-artifacts/{run_id}/stage1/output.parquet"
                 records = _artifact_records(
                     s3=s3,
                     key=quarantine_key,
@@ -438,7 +432,7 @@ class PollerTest(TestCase):
                     corrupted_count=1,
                 )
 
-    def test_poller_preserves_state_when_artifact_upload_fails(self):
+    def test_poller_preserves_state_when_artifact_upload_fails(self) -> None:
         run_id = "failed-upload-run"
         pull = _pull(number=401, updated_at="2026-09-12T00:00:00Z")
         state = {
@@ -495,7 +489,11 @@ class PollerTest(TestCase):
         )
 
 
-def _event(run_id, mode, batch_max_pull_requests):
+def _event(
+    run_id: str,
+    mode: Literal["incremental", "backfill"],
+    batch_max_pull_requests: int,
+) -> dict[str, Any]:
     return {
         "repositories": [REPOSITORY],
         "github_token": _token(),
@@ -511,11 +509,16 @@ def _event(run_id, mode, batch_max_pull_requests):
     }
 
 
-def _token():
+def _token() -> str:
     return Path("~/.github/token").expanduser().read_text().strip()
 
 
-def _pull(number, updated_at, state="open", merged_at=None):
+def _pull(
+    number: int,
+    updated_at: str,
+    state: str = "open",
+    merged_at: str | None = None,
+) -> dict[str, Any]:
     return {
         "number": number,
         "state": state,
@@ -526,11 +529,11 @@ def _pull(number, updated_at, state="open", merged_at=None):
     }
 
 
-def _path(endpoint):
+def _path(endpoint: str) -> str:
     return f"/repos/{REPOSITORY}/{endpoint}"
 
 
-def _json_bytes(value):
+def _json_bytes(value: Any) -> bytes:
     return json.dumps(
         obj=value,
         separators=(",", ":"),
@@ -538,17 +541,17 @@ def _json_bytes(value):
     ).encode()
 
 
-def _artifact_records(s3, key):
+def _artifact_records(s3: _S3, key: str) -> list[dict[str, Any]]:
     return parquet.read_table(
         io.BytesIO(s3.objects[(ARTIFACTS_BUCKET, key)])
     ).to_pylist()
 
 
-def _state_artifact(s3):
+def _state_artifact(s3: _S3) -> dict[str, Any]:
     return json.loads(s3.objects[(ARTIFACTS_BUCKET, STATE_KEY)])
 
 
-def _bronze_records(s3, run_id):
+def _bronze_records(s3: _S3, run_id: str) -> list[dict[str, Any]]:
     prefix = f"{REPOSITORY}/{run_id}/"
     records = []
     for (bucket, key), body in sorted(s3.objects.items()):
@@ -558,18 +561,16 @@ def _bronze_records(s3, run_id):
     return records
 
 
-def _assert_metrics(test, cloudwatch, status, corrupted_count):
+def _assert_metrics(
+    test: TestCase,
+    cloudwatch: _CloudWatch,
+    status: Literal["success", "empty", "fail"],
+    corrupted_count: int,
+) -> None:
     test.assertTrue(
-        all(
-            call["Namespace"] == CLOUDWATCH_NAMESPACE
-            for call in cloudwatch.calls
-        )
+        all(call["Namespace"] == CLOUDWATCH_NAMESPACE for call in cloudwatch.calls)
     )
-    metrics = [
-        metric
-        for call in cloudwatch.calls
-        for metric in call["MetricData"]
-    ]
+    metrics = [metric for call in cloudwatch.calls for metric in call["MetricData"]]
     test.assertEqual(
         _metric_values(metrics=metrics, name="job_start_count"),
         [1],
@@ -587,9 +588,7 @@ def _assert_metrics(test, cloudwatch, status, corrupted_count):
         1,
     )
     finish = [
-        metric
-        for metric in metrics
-        if metric["MetricName"] == "job_finish_status"
+        metric for metric in metrics if metric["MetricName"] == "job_finish_status"
     ]
     test.assertEqual(len(finish), 1)
     test.assertEqual(finish[0]["Value"], 1)
@@ -599,27 +598,45 @@ def _assert_metrics(test, cloudwatch, status, corrupted_count):
     )
 
 
-def _metric_values(metrics, name):
+def _metric_values(
+    metrics: list[dict[str, Any]],
+    name: str,
+) -> list[int | float]:
     return [metric["Value"] for metric in metrics if metric["MetricName"] == name]
 
 
 class _Reply:
-    def __init__(self, payload, status=200, next_url=None, empty_body=False):
+    def __init__(
+        self,
+        payload: Any,
+        status: int = 200,
+        next_url: str | None = None,
+        empty_body: bool = False,
+    ) -> None:
         self.status_code = status
         self.headers = {}
         self.content = b"" if empty_body else _json_bytes(payload)
         if next_url:
             self.headers["Link"] = f'<{next_url}>; rel="next"'
 
-    def json(self):
+    def json(self) -> Any:
         return json.loads(self.content)
 
 
 class _GitHub:
-    def __init__(self, routes):
+    def __init__(
+        self,
+        routes: dict[tuple[str, int], _Reply],
+    ) -> None:
         self.routes = dict(routes)
 
-    def get(self, url, headers, params=None, timeout=None):
+    def get(
+        self,
+        url: str,
+        headers: dict[str, str],
+        params: dict[str, str | int] | None = None,
+        timeout: float | None = None,
+    ) -> _Reply:
         if params:
             url = f"{url}?{urlencode(params)}"
         parsed = urlsplit(url)
@@ -629,14 +646,24 @@ class _GitHub:
 
 
 class _S3:
-    def __init__(self, objects=None, failed_puts=None):
+    def __init__(
+        self,
+        objects: dict[tuple[str, str], bytes] | None = None,
+        failed_puts: set[tuple[str, str]] | None = None,
+    ) -> None:
         self.objects = dict(objects or {})
         self.failed_puts = set(failed_puts or set())
 
-    def get_object(self, Bucket, Key):
+    def get_object(self, Bucket: str, Key: str) -> dict[str, io.BytesIO]:
         return {"Body": io.BytesIO(self.objects[(Bucket, Key)])}
 
-    def put_object(self, Bucket, Key, Body, **kwargs):
+    def put_object(
+        self,
+        Bucket: str,
+        Key: str,
+        Body: bytes | BinaryIO,
+        **kwargs: Any,
+    ) -> None:
         try:
             body = Body.read()
         except AttributeError:
@@ -647,10 +674,10 @@ class _S3:
 
 
 class _CloudWatch:
-    def __init__(self):
+    def __init__(self) -> None:
         self.calls = []
 
-    def put_metric_data(self, **kwargs):
+    def put_metric_data(self, **kwargs: Any) -> None:
         self.calls.append(kwargs)
 
 
