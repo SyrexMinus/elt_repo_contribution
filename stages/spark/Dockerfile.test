@@ -1,0 +1,24 @@
+FROM spark:3.5.0-scala2.12-java17-python3-ubuntu
+
+USER root
+
+COPY stages/spark/requirements-test.txt /tmp/requirements-test.txt
+RUN python3 -m pip install --no-cache-dir -r /tmp/requirements-test.txt
+
+RUN python3 -c "from urllib.request import urlretrieve; urlretrieve('https://repo1.maven.org/maven2/net/snowflake/spark-snowflake_2.12/3.2.2-spark_3.5/spark-snowflake_2.12-3.2.2-spark_3.5.jar', '/opt/spark/jars/spark-snowflake_2.12-3.2.2-spark_3.5.jar')" \
+    && echo "53e2fb0e76d7097378413a3d0ae8d3f7b0588f3d  /opt/spark/jars/spark-snowflake_2.12-3.2.2-spark_3.5.jar" | sha1sum -c - \
+    && python3 -c "from urllib.request import urlretrieve; urlretrieve('https://repo1.maven.org/maven2/net/snowflake/snowflake-jdbc/4.1.0/snowflake-jdbc-4.1.0.jar', '/opt/spark/jars/snowflake-jdbc-4.1.0.jar')" \
+    && echo "4a57dabcb45bd3ad3ad6a4cf17a08196e63cfeb0  /opt/spark/jars/snowflake-jdbc-4.1.0.jar" | sha1sum -c - \
+    && python3 -c "from urllib.request import urlretrieve; urlretrieve('https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar', '/opt/spark/jars/hadoop-aws-3.3.4.jar')" \
+    && echo "a65839fbf1869f81a1632e09f415e586922e4f80  /opt/spark/jars/hadoop-aws-3.3.4.jar" | sha1sum -c - \
+    && python3 -c "from urllib.request import urlretrieve; urlretrieve('https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar', '/opt/spark/jars/aws-java-sdk-bundle-1.12.262.jar')" \
+    && echo "02deec3a0ad83d13d032b1812421b23d7a961eea  /opt/spark/jars/aws-java-sdk-bundle-1.12.262.jar" | sha1sum -c -
+
+ENV AWS_ACCESS_KEY_ID=test
+ENV AWS_SECRET_ACCESS_KEY=test
+ENV AWS_DEFAULT_REGION=us-east-1
+ENV PYSPARK_PYTHON=python3
+ENV PYTHONPATH=/workspace:/opt/spark/python:/opt/spark/python/lib/py4j-0.10.9.7-src.zip
+
+WORKDIR /workspace
+COPY . /workspace

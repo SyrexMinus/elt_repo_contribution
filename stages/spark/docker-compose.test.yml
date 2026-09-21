@@ -1,0 +1,31 @@
+services:
+  localstack:
+    image: localstack/localstack:4.9.2
+    environment:
+      SERVICES: s3,cloudwatch
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:4566/_localstack/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  spark-tests:
+    build:
+      context: ../..
+      dockerfile: stages/spark/Dockerfile.test
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      LOCALSTACK_ENDPOINT: http://localstack:4566
+      GITHUB_TOKEN:
+      SNOWFLAKE_ACCOUNT:
+      SNOWFLAKE_URL:
+      SNOWFLAKE_USER:
+      SNOWFLAKE_PASSWORD:
+      SNOWFLAKE_ROLE:
+      SNOWFLAKE_DATABASE:
+      SNOWFLAKE_WAREHOUSE:
+    depends_on:
+      localstack:
+        condition: service_healthy

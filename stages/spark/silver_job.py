@@ -16,8 +16,19 @@ Target behaviour (README ch.4/5):
 import sys
 
 
+def silver(event, spark, s3, cloudwatch):
+    raise NotImplementedError("silver spark job not implemented")
+
+
 def main(argv):
-    # TODO: implement flatten -> schema enforce -> MERGE INTO silver tables.
+    raise NotImplementedError("silver spark job not implemented")
+
+
+def _transform_records(lines):
+    raise NotImplementedError("silver spark job not implemented")
+
+
+def _merge_tables(tables, snowflake_options):
     raise NotImplementedError("silver spark job not implemented")
 
 
