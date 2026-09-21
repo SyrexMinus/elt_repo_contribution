@@ -13,19 +13,34 @@ services:
     build:
       context: ../..
       dockerfile: stages/spark/Dockerfile.test
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        export GITHUB_TOKEN="$(</run/secrets/github_token)"
+        export SNOWFLAKE_PASSWORD="$(</run/secrets/snowflake_token)"
+        exec /opt/entrypoint.sh "$@"
+      - --
     environment:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_DEFAULT_REGION: us-east-1
       LOCALSTACK_ENDPOINT: http://localstack:4566
-      GITHUB_TOKEN:
-      SNOWFLAKE_ACCOUNT:
-      SNOWFLAKE_URL:
-      SNOWFLAKE_USER:
-      SNOWFLAKE_PASSWORD:
-      SNOWFLAKE_ROLE:
-      SNOWFLAKE_DATABASE:
-      SNOWFLAKE_WAREHOUSE:
+      SNOWFLAKE_ACCOUNT: QSLOGNN-IL52426
+      SNOWFLAKE_URL: QSLOGNN-IL52426.snowflakecomputing.com
+      SNOWFLAKE_USER: SYREXMINUS
+      SNOWFLAKE_ROLE: SYSADMIN
+      SNOWFLAKE_DATABASE: ELT_REPO_CONTRIBUTION_TEST
+      SNOWFLAKE_WAREHOUSE: ELT_TEST_WH
+    secrets:
+      - github_token
+      - snowflake_token
     depends_on:
       localstack:
         condition: service_healthy
+
+secrets:
+  github_token:
+    file: ${GITHUB_TOKEN_FILE:-${HOME}/.github/token}
+  snowflake_token:
+    file: ${SNOWFLAKE_TOKEN_FILE:-${HOME}/.snowflake/token}
