@@ -36,7 +36,7 @@ class SilverJobTest(TestCase):
     def tearDownClass(cls) -> None:
         cls.spark.stop()
 
-    def test_transform_records_builds_silver_rows_and_deduplicates_reviews(
+    def test_parse_records_builds_rows_and_build_tables_deduplicates_reviews(
         self,
     ) -> None:
         bronze_recs = [
@@ -87,7 +87,8 @@ class SilverJobTest(TestCase):
             "value string",
         )
 
-        silver_tables, corrupted_tables = silver_job._transform_records(bronze_lines)
+        parsed = silver_job._parse_records(bronze_lines)
+        silver_tables = silver_job._build_tables(parsed)
 
         self.assertEqual(
             {
@@ -168,7 +169,10 @@ class SilverJobTest(TestCase):
             ],
         )
         self.assertEqual(
-            {name: frame.count() for name, frame in corrupted_tables.items()},
+            {
+                table: parsed.filter((parsed.table == table) & ~parsed.valid).count()
+                for table in ("pull", "file", "review")
+            },
             {"pull": 0, "file": 0, "review": 0},
         )
 
