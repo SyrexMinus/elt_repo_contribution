@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-cd "$project_dir"
-
-venv_dir="$project_dir/stages/dbt/tests/.venv"
+venv_dir="stages/dbt/tests/.venv"
 if [[ ! -x "$venv_dir/bin/python" ]]; then
     python3 -m venv "$venv_dir"
 fi

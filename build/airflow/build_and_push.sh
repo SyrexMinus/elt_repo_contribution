@@ -12,9 +12,6 @@ if [[ ! "$repository_uri" =~ ^[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/[a
   exit 2
 fi
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$script_dir/../.."
-
 registry="${repository_uri%%/*}"
 region="$(printf '%s' "$registry" | cut -d. -f4)"
 repository_name="${repository_uri#*/}"
