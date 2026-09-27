@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import re
 import uuid
 from collections import Counter
 from copy import deepcopy
@@ -14,12 +13,12 @@ from unittest import TestCase
 import boto3
 import pyarrow as arrow
 import requests
-import snowflake.connector
 from pyarrow import parquet
 from pyspark.sql import SparkSession
 
 from stages.poller.poller import poller
 from stages.spark import silver_job
+from stages.spark.snowflake_test_helpers import set_up_snowflake
 
 REPOSITORY = "salute-developers/smart_app_framework"
 BRONZE_BUCKET = "bronze-bucket"
@@ -30,24 +29,11 @@ CLOUDWATCH_NAMESPACE = "RepoContribution/IntegrationTest"
 class SilverJobIntegrationTest(TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.schema = f"SILVER_TEST_{uuid.uuid4().hex.upper()}"
-        cls.database = _identifier(os.environ["SNOWFLAKE_DATABASE"])
-        cls.snowflake = snowflake.connector.connect(
-            account=os.environ["SNOWFLAKE_ACCOUNT"],
-            user=os.environ["SNOWFLAKE_USER"],
-            password=os.environ["SNOWFLAKE_PASSWORD"],
-            role=os.environ["SNOWFLAKE_ROLE"],
-            database=cls.database,
-            warehouse=os.environ["SNOWFLAKE_WAREHOUSE"],
+        set_up_snowflake(
+            cls,
+            os.environ["SNOWFLAKE_DATABASE"],
+            f"SILVER_TEST_{uuid.uuid4().hex.upper()}",
         )
-        cls.addClassCleanup(cls.snowflake.close)
-        _execute(cls.snowflake, f"CREATE TRANSIENT SCHEMA {cls.database}.{cls.schema}")
-        cls.addClassCleanup(
-            _execute,
-            cls.snowflake,
-            f"DROP SCHEMA IF EXISTS {cls.database}.{cls.schema} CASCADE",
-        )
-        _create_tables(cls.snowflake, cls.database, cls.schema)
 
         endpoint = os.environ["LOCALSTACK_ENDPOINT"]
         client_options = {
@@ -141,7 +127,7 @@ class SilverJobIntegrationTest(TestCase):
                         self.snowflake,
                         "SELECT REPO, PR_NUM, STATE, TITLE, USER_LOGIN, "
                         "CREATED_AT, UPDATED_AT, MERGED_AT, PARSE_RUN_ID "
-                        f"FROM {self.database}.{self.schema}.PULL WHERE PR_NUM = 1",
+                        f"FROM {self.database}.{self.silver_schema}.PULL WHERE PR_NUM = 1",
                     )
                 ),
                 (
@@ -160,7 +146,7 @@ class SilverJobIntegrationTest(TestCase):
                 _query_one(
                     self.snowflake,
                     "SELECT FILENAME, ADDITIONS, DELETIONS "
-                    f"FROM {self.database}.{self.schema}.FILE "
+                    f"FROM {self.database}.{self.silver_schema}.FILE "
                     "WHERE PR_NUM = 210 "
                     "AND FILENAME = 'core/utils/stats_timer.py'",
                 ),
@@ -170,7 +156,7 @@ class SilverJobIntegrationTest(TestCase):
                 _query_one(
                     self.snowflake,
                     "SELECT USER_LOGIN, STATE "
-                    f"FROM {self.database}.{self.schema}.REVIEW "
+                    f"FROM {self.database}.{self.silver_schema}.REVIEW "
                     "WHERE PR_NUM = 210 AND USER_LOGIN = 'dangerink'",
                 ),
                 ("dangerink", "APPROVED"),
@@ -244,7 +230,7 @@ class SilverJobIntegrationTest(TestCase):
                 _query_one(
                     self.snowflake,
                     "SELECT TITLE, PARSE_RUN_ID "
-                    f"FROM {self.database}.{self.schema}.PULL WHERE PR_NUM = 1",
+                    f"FROM {self.database}.{self.silver_schema}.PULL WHERE PR_NUM = 1",
                 ),
                 ("Feature/new metrics [integration update]", newer_run_id),
             )
@@ -277,7 +263,7 @@ class SilverJobIntegrationTest(TestCase):
                 _query_one(
                     self.snowflake,
                     "SELECT TITLE, PARSE_RUN_ID "
-                    f"FROM {self.database}.{self.schema}.PULL WHERE PR_NUM = 1",
+                    f"FROM {self.database}.{self.silver_schema}.PULL WHERE PR_NUM = 1",
                 ),
                 ("Feature/new metrics [integration update]", newer_run_id),
             )
@@ -300,63 +286,11 @@ class SilverJobIntegrationTest(TestCase):
                 "sfUser": os.environ["SNOWFLAKE_USER"],
                 "sfPassword": os.environ["SNOWFLAKE_PASSWORD"],
                 "sfDatabase": self.database,
-                "sfSchema": self.schema,
+                "sfSchema": self.silver_schema,
                 "sfWarehouse": os.environ["SNOWFLAKE_WAREHOUSE"],
                 "sfRole": os.environ["SNOWFLAKE_ROLE"],
             },
         }
-
-
-def _identifier(value: str) -> str:
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", value):
-        raise ValueError(f"unsafe Snowflake identifier: {value}")
-    return value.upper()
-
-
-def _execute(connection, sql: str) -> None:
-    with connection.cursor() as cursor:
-        cursor.execute(sql)
-
-
-def _create_tables(connection, database: str, schema: str) -> None:
-    prefix = f"{database}.{schema}"
-    statements = [
-        f"""
-        CREATE TABLE {prefix}.PULL (
-            REPO STRING,
-            PR_NUM NUMBER(38, 0),
-            MERGED_AT TIMESTAMP_NTZ,
-            USER_LOGIN STRING,
-            STATE STRING,
-            CREATED_AT TIMESTAMP_NTZ,
-            UPDATED_AT TIMESTAMP_NTZ,
-            TITLE STRING,
-            PARSE_RUN_ID STRING
-        )
-        """,
-        f"""
-        CREATE TABLE {prefix}.FILE (
-            REPO STRING,
-            PR_NUM NUMBER(38, 0),
-            FILENAME STRING,
-            ADDITIONS NUMBER(38, 0),
-            DELETIONS NUMBER(38, 0),
-            PARSE_RUN_ID STRING
-        )
-        """,
-        f"""
-        CREATE TABLE {prefix}.REVIEW (
-            REPO STRING,
-            PR_NUM NUMBER(38, 0),
-            USER_LOGIN STRING,
-            STATE STRING,
-            PARSE_RUN_ID STRING
-        )
-        """,
-    ]
-    for statement in statements:
-        _execute(connection, statement)
-
 
 def _run_id(value: datetime) -> str:
     return value.strftime("%Y%m%dT%H%M%S%fZ")
@@ -451,7 +385,7 @@ def _count(connection, table: str) -> int:
     return _query_one(
         connection,
         f"SELECT COUNT(*) FROM {SilverJobIntegrationTest.database}."
-        f"{SilverJobIntegrationTest.schema}.{table}",
+        f"{SilverJobIntegrationTest.silver_schema}.{table}",
     )[0]
 
 

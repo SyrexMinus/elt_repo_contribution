@@ -9,7 +9,6 @@ from unittest import TestCase
 from unittest.mock import patch
 
 import pyarrow as arrow
-import yaml
 from pyarrow import parquet
 from pyspark.sql import DataFrame, SparkSession
 
@@ -406,45 +405,6 @@ class SilverJobTest(TestCase):
             status="empty",
             corrupted_count=0,
         )
-
-
-class TableSchemasTest(TestCase):
-    def test_table_schemas_match_dbt_sources(self) -> None:
-        sources_path = Path(__file__).parents[1] / "dbt/models/sources.yml"
-        dbt_sources = yaml.safe_load(sources_path.read_text())
-        dbt_silver_source = next(
-            source for source in dbt_sources["sources"] if source["name"] == "silver"
-        )
-        dbt_table_schemas = [
-            (
-                table["name"],
-                [
-                    (
-                        column["name"],
-                        column["data_type"].lower().replace(" ", ""),
-                    )
-                    for column in table["columns"]
-                ],
-            )
-            for table in dbt_silver_source["tables"]
-        ]
-        snowflake_types = {
-            "string": "varchar",
-            "bigint": "number(38,0)",
-            "timestamp": "timestamp_ntz",
-        }
-        spark_table_schemas = [
-            (
-                table,
-                [
-                    (field.name, snowflake_types[field.dataType.simpleString()])
-                    for field in schema.fields
-                ],
-            )
-            for table, schema in silver_job._TABLE_SCHEMAS.items()
-        ]
-
-        self.assertEqual(dbt_table_schemas, spark_table_schemas)
 
 
 def _record(

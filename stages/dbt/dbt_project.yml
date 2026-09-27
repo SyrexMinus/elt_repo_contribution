@@ -6,6 +6,7 @@ profile: "repo_contribution"
 
 model-paths: ["models"]
 macro-paths: ["macros"]
+test-paths: []
 clean-targets: ["target", "dbt_packages"]
 
 vars:

@@ -1,0 +1,2 @@
+dbt-snowflake==1.11.5
+PyYAML==6.0.2
