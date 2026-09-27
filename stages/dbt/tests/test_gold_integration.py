@@ -79,7 +79,7 @@ class GoldBuildIntegrationTest(TestCase):
             {relation: len(rows) for relation, rows in gold.items()},
             {
                 "FACT_TIME_TO_SHIP": 3 if incremental else 2,
-                "FACT_PR_DIRECTORY": 24 if incremental else 19,
+                "FACT_PR_DIRECTORY": 15 if incremental else 19,
                 "FACT_REVIEW_INTERACTIONS": 4 if incremental else 3,
             },
         )
@@ -94,7 +94,7 @@ class GoldBuildIntegrationTest(TestCase):
                         "merged_at": "2026-09-20T11:01:00",
                         "time_to_ship_minutes": 61,
                         "source_updated_at": "2026-09-20T11:02:00",
-                        "source_parse_run_id": INITIAL_RUN_ID,
+                        "source_parse_run_id": INCREMENTAL_RUN_ID,
                     },
                     {
                         "repo": REPOSITORY,
@@ -114,10 +114,10 @@ class GoldBuildIntegrationTest(TestCase):
                         "dir": "src/core",
                         "user_login": "SyrexMinus",
                         "merged_at": "2026-09-20T11:01:00",
-                        "directory_diff": 12,
-                        "pr_diff": 29,
+                        "directory_diff": 10,
+                        "pr_diff": 10,
                         "source_updated_at": "2026-09-20T11:02:00",
-                        "source_parse_run_id": INITIAL_RUN_ID,
+                        "source_parse_run_id": INCREMENTAL_RUN_ID,
                     },
                     {
                         "repo": REPOSITORY,
@@ -141,7 +141,7 @@ class GoldBuildIntegrationTest(TestCase):
                         "review_state": "APPROVED",
                         "merged_at": "2026-09-20T11:01:00",
                         "source_updated_at": "2026-09-20T11:02:00",
-                        "source_parse_run_id": INITIAL_RUN_ID,
+                        "source_parse_run_id": INCREMENTAL_RUN_ID,
                     },
                     {
                         "repo": REPOSITORY,
@@ -215,6 +215,27 @@ class GoldBuildIntegrationTest(TestCase):
                 )
 
         if incremental:
+            self.assertEqual(
+                {
+                    (
+                        row["nest_level"],
+                        row["dir"],
+                        row["directory_diff"],
+                        row["pr_diff"],
+                    )
+                    for row in gold["FACT_PR_DIRECTORY"]
+                    if row["repo"] == REPOSITORY and row["pr_num"] == 1
+                },
+                {
+                    (
+                        level,
+                        "src" if level == 1 else "src/core",
+                        10,
+                        10,
+                    )
+                    for level in range(1, 6)
+                },
+            )
             self.assertEqual(
                 {
                     (
@@ -496,6 +517,30 @@ def _apply_increment(
     silver_schema: str,
 ) -> None:
     prefix = f"{database}.{silver_schema}"
+    execute(
+        connection=connection,
+        sql=(
+            f"UPDATE {prefix}.PULL SET PARSE_RUN_ID = '{INCREMENTAL_RUN_ID}' "
+            f"WHERE REPO = '{REPOSITORY}' AND PR_NUM = 1"
+        ),
+    )
+    execute(
+        connection=connection,
+        sql=(
+            f"DELETE FROM {prefix}.FILE "
+            f"WHERE REPO = '{REPOSITORY}' AND PR_NUM = 1 "
+            "AND FILENAME <> 'src/core/a.py'"
+        ),
+    )
+    execute(
+        connection=connection,
+        sql=(
+            f"UPDATE {prefix}.FILE SET ADDITIONS = 8, DELETIONS = 2, "
+            f"PARSE_RUN_ID = '{INCREMENTAL_RUN_ID}' "
+            f"WHERE REPO = '{REPOSITORY}' AND PR_NUM = 1 "
+            "AND FILENAME = 'src/core/a.py'"
+        ),
+    )
     execute(
         connection=connection,
         sql=(

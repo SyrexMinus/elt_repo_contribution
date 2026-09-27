@@ -5,7 +5,6 @@ from unittest import TestCase
 
 import snowflake.connector
 
-
 SILVER_TABLE_SCHEMAS = {
     "pull": [
         ("repo", "varchar"),

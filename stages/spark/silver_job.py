@@ -14,10 +14,7 @@ import pyarrow as arrow
 from pyarrow import parquet
 from pydantic import BaseModel, ConfigDict
 from pyspark import StorageLevel
-from pyspark.sql import Column, DataFrame, SparkSession
-from pyspark.sql import functions as functions
-from pyspark.sql import types
-
+from pyspark.sql import Column, DataFrame, SparkSession, functions, types
 
 _TABLE_SCHEMAS = {
     "pull": types.StructType(
@@ -83,6 +80,7 @@ _SOURCE_SCHEMA = types.StructType(
         types.StructField("run_id", types.StringType()),
         types.StructField("repo", types.StringType()),
         types.StructField("pr_num", types.LongType()),
+        types.StructField("produced_new_snapshot", types.BooleanType()),
         types.StructField("payload", types.StringType()),
     ]
 )
@@ -149,13 +147,15 @@ def silver(
                 for table, frame in _build_tables(parsed).items()
             }
             cached_frames.extend(tables.values())
+            snapshot_pulls = _build_snapshot_pulls(
+                parsed=parsed,
+                pulls=tables["pull"],
+            ).persist(StorageLevel.MEMORY_AND_DISK)
+            cached_frames.append(snapshot_pulls)
             output_counts = _count_tables(tables)
             _merge_tables(
-                tables={
-                    table: frame
-                    for table, frame in tables.items()
-                    if output_counts[table]
-                },
+                tables=tables,
+                snapshot_pulls=snapshot_pulls,
                 snowflake_options=config.snowflake_options.model_dump(
                     exclude_none=True
                 ),
@@ -238,12 +238,14 @@ def _parse_records(lines: DataFrame) -> DataFrame:
         "run_id",
         "repo",
         "pr_num",
+        "produced_new_snapshot",
         functions.col("payload").alias("_payload_source"),
         functions.from_json("payload", _PAYLOAD_SCHEMA).alias("payload"),
     )
     parsed = source.select(
         "raw",
         "entity",
+        "produced_new_snapshot",
         functions.when(
             functions.col("entity").isin(*_TABLE_COLUMNS),
             functions.col("entity"),
@@ -290,6 +292,7 @@ def _parse_records(lines: DataFrame) -> DataFrame:
         functions.when(
             functions.col("entity") == "pull",
             common_valid
+            & functions.col("produced_new_snapshot").isNotNull()
             & _is_nonempty_string("user_login")
             & _is_json_string(column="_payload_source", field="login")
             & _is_nonempty_string("state")
@@ -376,6 +379,17 @@ def _build_tables(parsed: DataFrame) -> dict[str, DataFrame]:
     return tables
 
 
+def _build_snapshot_pulls(parsed: DataFrame, pulls: DataFrame) -> DataFrame:
+    return pulls.select("repo", "pr_num", "parse_run_id").join(
+        parsed.filter(
+            (functions.col("entity") == "pull")
+            & functions.col("valid")
+            & functions.col("produced_new_snapshot")
+        ).select("repo", "pr_num", "parse_run_id"),
+        on=["repo", "pr_num", "parse_run_id"],
+    ).distinct()
+
+
 def _count_parsed_records(
     parsed: DataFrame,
 ) -> tuple[dict[str, int], dict[str, int]]:
@@ -419,47 +433,118 @@ def _count_tables(tables: dict[str, DataFrame]) -> dict[str, int]:
 
 def _merge_tables(
     tables: dict[str, DataFrame],
+    snapshot_pulls: DataFrame,
     snowflake_options: dict[str, str],
 ) -> None:
-    for table, frame in tables.items():
-        stage = f"SILVER_{table.upper()}_{uuid.uuid4().hex.upper()}"
-        columns = _TABLE_COLUMNS[table]
-        frame.select(
-            *[
-                functions.col(column).alias(column.upper())
-                for column in columns
-            ]
-        ).write.format("net.snowflake.spark.snowflake").options(
-            **snowflake_options
-        ).option("dbtable", stage).mode("overwrite").save()
+    stages = {
+        table: f"SILVER_{table.upper()}_{uuid.uuid4().hex.upper()}"
+        for table in tables
+    }
+    snapshot_pulls = snapshot_pulls.withColumn(
+        "produced_new_snapshot",
+        functions.lit(True),
+    )
 
-        assignments = ", ".join(
-            f"{column.upper()} = s.{column.upper()}" for column in columns
-        )
-        names = ", ".join(column.upper() for column in columns)
-        values = ", ".join(f"s.{column.upper()}" for column in columns)
-        condition = " AND ".join(
-            f"t.{column.upper()} = s.{column.upper()}"
-            for column in _PRIMARY_KEYS[table]
-        )
-        merge = (
-            f"MERGE INTO {table.upper()} t USING {stage} s ON {condition} "
-            "WHEN MATCHED AND s.PARSE_RUN_ID > t.PARSE_RUN_ID THEN "
-            f"UPDATE SET {assignments} "
-            f"WHEN NOT MATCHED THEN INSERT ({names}) VALUES ({values})"
-        )
-        try:
+    try:
+        for table in ("pull", "file", "review"):
+            frame = tables[table]
+            columns = _TABLE_COLUMNS[table]
+            if table == "pull":
+                frame = frame.join(
+                    snapshot_pulls,
+                    on=["repo", "pr_num", "parse_run_id"],
+                    how="left",
+                ).fillna({"produced_new_snapshot": False})
+                columns = [*columns, "produced_new_snapshot"]
+            frame.select(
+                *[
+                    functions.col(column).alias(column.upper())
+                    for column in columns
+                ]
+            ).write.format("net.snowflake.spark.snowflake").options(
+                **snowflake_options
+            ).option("dbtable", stages[table]).mode("overwrite").save()
+
+            merge = _merge_query(
+                table=table,
+                stage=stages[table],
+                snapshot_stage=stages["pull"],
+            )
             _run_snowflake_query(
                 spark=frame.sparkSession,
                 snowflake_options=snowflake_options,
                 query=merge,
             )
-        finally:
+    finally:
+        for stage in stages.values():
             _run_snowflake_query(
-                spark=frame.sparkSession,
+                spark=snapshot_pulls.sparkSession,
                 snowflake_options=snowflake_options,
                 query=f"DROP TABLE IF EXISTS {stage}",
             )
+
+
+def _merge_query(table: str, stage: str, snapshot_stage: str) -> str:
+    columns = _TABLE_COLUMNS[table]
+    assignments = ", ".join(
+        f"{column.upper()} = s.{column.upper()}" for column in columns
+    )
+    names = ", ".join(column.upper() for column in columns)
+    values = ", ".join(f"s.{column.upper()}" for column in columns)
+    condition = " AND ".join(
+        f"t.{column.upper()} = s.{column.upper()}"
+        for column in _PRIMARY_KEYS[table]
+    )
+    if table == "pull":
+        return (
+            f"MERGE INTO PULL t USING {stage} s ON {condition} "
+            "WHEN MATCHED AND s.PARSE_RUN_ID > t.PARSE_RUN_ID THEN "
+            f"UPDATE SET {assignments} "
+            f"WHEN NOT MATCHED THEN INSERT ({names}) VALUES ({values})"
+        )
+
+    child_columns = ", ".join(f"child.{column.upper()}" for column in columns)
+    existing_columns = ", ".join(
+        (
+            "snapshot.PARSE_RUN_ID"
+            if column == "parse_run_id"
+            else f"existing.{column.upper()}"
+        )
+        for column in columns
+    )
+    snapshot_condition = (
+        "snapshot.PRODUCED_NEW_SNAPSHOT "
+        "AND snapshot.REPO = pull.REPO AND snapshot.PR_NUM = pull.PR_NUM "
+        "AND snapshot.PARSE_RUN_ID = pull.PARSE_RUN_ID"
+    )
+    missing_child_condition = " AND ".join(
+        f"child.{column.upper()} = existing.{column.upper()}"
+        for column in _PRIMARY_KEYS[table]
+    )
+    source = (
+        f"(SELECT {child_columns}, FALSE AS DELETE_ROW FROM {stage} child "
+        f"INNER JOIN {snapshot_stage} snapshot "
+        "ON child.REPO = snapshot.REPO AND child.PR_NUM = snapshot.PR_NUM "
+        "AND child.PARSE_RUN_ID = snapshot.PARSE_RUN_ID "
+        f"INNER JOIN PULL pull ON {snapshot_condition} "
+        f"UNION ALL SELECT {existing_columns}, TRUE AS DELETE_ROW "
+        f"FROM {table.upper()} existing "
+        f"INNER JOIN {snapshot_stage} snapshot "
+        "ON existing.REPO = snapshot.REPO AND existing.PR_NUM = snapshot.PR_NUM "
+        f"INNER JOIN PULL pull ON {snapshot_condition} "
+        f"LEFT JOIN {stage} child ON {missing_child_condition} "
+        "AND child.PARSE_RUN_ID = snapshot.PARSE_RUN_ID "
+        f"WHERE child.{_PRIMARY_KEYS[table][-1].upper()} IS NULL)"
+    )
+    return (
+        f"MERGE INTO {table.upper()} t USING {source} s ON {condition} "
+        "WHEN MATCHED AND s.DELETE_ROW "
+        "AND s.PARSE_RUN_ID > t.PARSE_RUN_ID THEN DELETE "
+        "WHEN MATCHED AND s.PARSE_RUN_ID > t.PARSE_RUN_ID THEN "
+        f"UPDATE SET {assignments} "
+        "WHEN NOT MATCHED AND NOT s.DELETE_ROW THEN "
+        f"INSERT ({names}) VALUES ({values})"
+    )
 
 
 def _is_nonempty_string(column: str) -> Column:

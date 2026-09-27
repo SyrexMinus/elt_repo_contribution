@@ -57,6 +57,10 @@ class PollerTest(TestCase):
 
         self.assertGreaterEqual(len(pull_records), 45)
         self.assertGreaterEqual(len(file_records), 45)
+        self.assertEqual(
+            {record["produced_new_snapshot"] for record in pull_records},
+            {True},
+        )
         self.assertNotIn(1, [record["pr_num"] for record in pull_records])
         self.assertIn(
             {
@@ -209,6 +213,10 @@ class PollerTest(TestCase):
 
         self.assertGreaterEqual(len(pull_records), 230)
         self.assertGreaterEqual(len(file_records), 230)
+        self.assertEqual(
+            {record["produced_new_snapshot"] for record in pull_records},
+            {True},
+        )
         self.assertIn(
             {
                 "number": 1,

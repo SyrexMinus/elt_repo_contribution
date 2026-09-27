@@ -127,6 +127,7 @@ class _BronzeRecord(BaseModel):
     pr_num: int
     entity: Literal["pull", "file", "review"]
     payload: dict[str, Any]
+    produced_new_snapshot: bool | None = None
 
 
 class _ArtifactRecord(BaseModel):
@@ -194,6 +195,12 @@ def _poll_and_store_repo_events(
                 stop = True
                 break
 
+            cached = next_state.pull_requests.get(str(pull["number"]))
+            produced_new_snapshot = (
+                event.mode == "backfill"
+                or not cached
+                or (not cached.merged and cached.updated_at != pull["updated_at"])
+            )
             records: list[_BronzeRecord] = [
                 _BronzeRecord(
                     run_id=event.run_id,
@@ -201,14 +208,10 @@ def _poll_and_store_repo_events(
                     pr_num=pull["number"],
                     entity="pull",
                     payload=pull,
+                    produced_new_snapshot=produced_new_snapshot,
                 )
             ]
-            cached = next_state.pull_requests.get(str(pull["number"]))
-            if (
-                event.mode == "backfill"
-                or not cached
-                or (not cached.merged and cached.updated_at != pull["updated_at"])
-            ):
+            if produced_new_snapshot:
                 for entity in ("file", "review"):
                     endpoint = "files" if entity == "file" else "reviews"
                     for items in _iter_github_pages(
@@ -231,7 +234,17 @@ def _poll_and_store_repo_events(
                             for payload in items
                         )
 
-            lines = [record.model_dump_json().encode() + b"\n" for record in records]
+            lines = [
+                (
+                    record.model_dump_json(
+                        exclude={"produced_new_snapshot"}
+                        if record.entity != "pull"
+                        else None
+                    )
+                    + "\n"
+                ).encode()
+                for record in records
+            ]
             size = sum(map(len, lines))
             if batch and (
                 batch_pulls >= event.batch_max_pull_requests

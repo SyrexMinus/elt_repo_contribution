@@ -418,13 +418,16 @@ def _record(
     pr_num: int = 7,
     run_id: str = RUN_ID,
 ) -> dict[str, Any]:
-    return {
+    record = {
         "run_id": run_id,
         "repo": REPOSITORY,
         "pr_num": pr_num,
         "entity": entity,
         "payload": payload,
     }
+    if entity == "pull":
+        record["produced_new_snapshot"] = True
+    return record
 
 
 def _pull_payload() -> dict[str, Any]:

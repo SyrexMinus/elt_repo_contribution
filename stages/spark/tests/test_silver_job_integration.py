@@ -69,7 +69,7 @@ class SilverJobIntegrationTest(TestCase):
     def test_silver_writes_live_backfill_to_snowflake(self) -> None:
         started_at = datetime.now(timezone.utc)
         initial_run_id = _run_id(started_at)
-        newer_run_id = _run_id(started_at + timedelta(seconds=1))
+        snapshot_update_run_id = _run_id(started_at + timedelta(seconds=1))
         cloudwatch = _RecordingCloudWatch(self.cloudwatch_client)
 
         with requests.Session() as github:
@@ -207,65 +207,65 @@ class SilverJobIntegrationTest(TestCase):
                 },
                 snowflake_counts_after_insert,
             )
+        snapshot_pr_num = 210
+        source_pull_rec = next(
+            record
+            for record in bronze_recs
+            if record["entity"] == "pull" and record["pr_num"] == snapshot_pr_num
+        )
+        unrelated_child_rows = _child_rows(
+            connection=self.snowflake,
+            database=self.database,
+            silver_schema=self.silver_schema,
+            pr_num=1,
+        )
 
-        updated_pull_rec = deepcopy(
-            next(
-                record
-                for record in bronze_recs
-                if record["entity"] == "pull" and record["pr_num"] == 1
+        with self.subTest("Newer snapshot updates pull and replaces child rows"):
+            snapshot_update_event = self._event(
+                run_id=snapshot_update_run_id,
+                artifact_uri=_store_snapshot(
+                    s3=self.s3,
+                    run_id=snapshot_update_run_id,
+                    source_pull_rec=source_pull_rec,
+                    title="Complete snapshot update",
+                    updated_at="2026-09-27T11:00:00Z",
+                    files=[("src/kept.py", 0, 7, "removed")],
+                    reviews=[
+                        ("kept-reviewer", "APPROVED", "2026-09-27T11:01:00Z")
+                    ],
+                ),
             )
-        )
-        updated_pull_rec["run_id"] = newer_run_id
-        updated_pull_rec["payload"]["title"] = (
-            "Feature/new metrics [integration update]"
-        )
-        increment_artifact_uri = _store_increment(
-            s3=self.s3,
-            run_id=newer_run_id,
-            pull_rec=updated_pull_rec,
-        )
-        newer_event = self._event(
-            run_id=newer_run_id,
-            artifact_uri=increment_artifact_uri,
-        )
-
-        with self.subTest("Newer event updates existing row"):
             silver_job.silver(
-                event=newer_event,
+                event=snapshot_update_event,
                 spark=self.spark,
                 s3=self.s3,
                 cloudwatch=cloudwatch,
             )
             self.assertEqual(
-                _query_one(
+                _pull_version(
                     connection=self.snowflake,
-                    sql="SELECT TITLE, PARSE_RUN_ID "
-                    f"FROM {self.database}.{self.silver_schema}.PULL WHERE PR_NUM = 1",
+                    database=self.database,
+                    silver_schema=self.silver_schema,
+                    pr_num=snapshot_pr_num,
                 ),
-                ("Feature/new metrics [integration update]", newer_run_id),
+                ("Complete snapshot update", snapshot_update_run_id),
             )
             self.assertEqual(
+                _child_rows(
+                    connection=self.snowflake,
+                    database=self.database,
+                    silver_schema=self.silver_schema,
+                    pr_num=snapshot_pr_num,
+                ),
                 {
-                    table: _count(connection=self.snowflake, table=table)
-                    for table in ("PULL", "FILE", "REVIEW")
+                    "file": [("src/kept.py", 0, 7, snapshot_update_run_id)],
+                    "review": [
+                        ("kept-reviewer", "APPROVED", snapshot_update_run_id)
+                    ],
                 },
-                snowflake_counts_after_insert,
-            )
-            self.assertEqual(
-                {
-                    record["table"]: (
-                        record["source_row_count"],
-                        record["output_row_count"],
-                    )
-                    for record in _artifact_records(
-                        s3=self.s3,
-                        run_id=newer_run_id,
-                    )
-                },
-                {"pull": (1, 1), "file": (0, 0), "review": (0, 0)},
             )
 
-        with self.subTest("Older event does not overwrite newer row"):
+        with self.subTest("Older snapshot does not restore replaced child rows"):
             silver_job.silver(
                 event=initial_event,
                 spark=self.spark,
@@ -273,19 +273,36 @@ class SilverJobIntegrationTest(TestCase):
                 cloudwatch=cloudwatch,
             )
             self.assertEqual(
-                _query_one(
+                _pull_version(
                     connection=self.snowflake,
-                    sql="SELECT TITLE, PARSE_RUN_ID "
-                    f"FROM {self.database}.{self.silver_schema}.PULL WHERE PR_NUM = 1",
+                    database=self.database,
+                    silver_schema=self.silver_schema,
+                    pr_num=snapshot_pr_num,
                 ),
-                ("Feature/new metrics [integration update]", newer_run_id),
+                ("Complete snapshot update", snapshot_update_run_id),
             )
             self.assertEqual(
+                _child_rows(
+                    connection=self.snowflake,
+                    database=self.database,
+                    silver_schema=self.silver_schema,
+                    pr_num=snapshot_pr_num,
+                ),
                 {
-                    table: _count(connection=self.snowflake, table=table)
-                    for table in ("PULL", "FILE", "REVIEW")
+                    "file": [("src/kept.py", 0, 7, snapshot_update_run_id)],
+                    "review": [
+                        ("kept-reviewer", "APPROVED", snapshot_update_run_id)
+                    ],
                 },
-                snowflake_counts_after_insert,
+            )
+            self.assertEqual(
+                _child_rows(
+                    connection=self.snowflake,
+                    database=self.database,
+                    silver_schema=self.silver_schema,
+                    pr_num=1,
+                ),
+                unrelated_child_rows,
             )
 
     def _event(self, run_id: str, artifact_uri: str) -> dict[str, Any]:
@@ -354,12 +371,63 @@ def _artifact_records(s3, run_id: str) -> list[dict[str, Any]]:
     return parquet.read_table(io.BytesIO(artifact_body)).to_pylist()
 
 
-def _store_increment(s3, run_id: str, pull_rec: dict[str, Any]) -> str:
+def _store_snapshot(
+    s3,
+    run_id: str,
+    source_pull_rec: dict[str, Any],
+    title: str,
+    updated_at: str,
+    files: list[tuple[str, int, int, str]],
+    reviews: list[tuple[str, str, str]],
+) -> str:
+    pull_rec = deepcopy(source_pull_rec)
+    pull_rec["run_id"] = run_id
+    pull_rec["produced_new_snapshot"] = True
+    pull_rec["payload"]["title"] = title
+    pull_rec["payload"]["updated_at"] = updated_at
+    bronze_recs = [pull_rec]
+    bronze_recs.extend(
+        {
+            "run_id": run_id,
+            "repo": REPOSITORY,
+            "pr_num": pull_rec["pr_num"],
+            "entity": "file",
+            "payload": {
+                "filename": filename,
+                "additions": additions,
+                "deletions": deletions,
+                "status": status,
+            },
+        }
+        for filename, additions, deletions, status in files
+    )
+    bronze_recs.extend(
+        {
+            "run_id": run_id,
+            "repo": REPOSITORY,
+            "pr_num": pull_rec["pr_num"],
+            "entity": "review",
+            "payload": {
+                "user": {"login": user_login},
+                "state": state,
+                "submitted_at": submitted_at,
+            },
+        }
+        for user_login, state, submitted_at in reviews
+    )
+    return _store_increment(s3=s3, run_id=run_id, bronze_recs=bronze_recs)
+
+
+def _store_increment(
+    s3,
+    run_id: str,
+    bronze_recs: list[dict[str, Any]],
+) -> str:
     bronze_key = f"{REPOSITORY}/{run_id}/batch-00000.jsonl"
     s3.put_object(
         Bucket=BRONZE_BUCKET,
         Key=bronze_key,
-        Body=(json.dumps(pull_rec) + "\n").encode(),
+        Body="".join(json.dumps(record) + "\n" for record in bronze_recs).encode(),
         ContentType="application/x-ndjson",
     )
     manifest_key = f"pipeline-artifacts/{run_id}/stage1/output.parquet"
@@ -369,8 +437,10 @@ def _store_increment(s3, run_id: str, pull_rec: dict[str, Any]) -> str:
                 "run_id": run_id,
                 "repo": REPOSITORY,
                 "s3_uri": f"s3://{BRONZE_BUCKET}/{bronze_key}",
-                "pull_request_count": 1,
-                "record_count": 1,
+                "pull_request_count": sum(
+                    record["entity"] == "pull" for record in bronze_recs
+                ),
+                "record_count": len(bronze_recs),
             }
         ],
         schema=arrow.schema(
@@ -409,6 +479,46 @@ def _query_one(connection, sql: str) -> tuple[Any, ...]:
     if row is None:
         raise AssertionError(f"query returned no rows: {sql}")
     return tuple(row)
+
+
+def _child_rows(
+    connection,
+    database: str,
+    silver_schema: str,
+    pr_num: int,
+) -> dict[str, list[tuple[Any, ...]]]:
+    prefix = f"{database}.{silver_schema}"
+    return {
+        "file": _query_all(
+            connection=connection,
+            sql="SELECT FILENAME, ADDITIONS, DELETIONS, PARSE_RUN_ID "
+            f"FROM {prefix}.FILE WHERE PR_NUM = {pr_num} ORDER BY FILENAME",
+        ),
+        "review": _query_all(
+            connection=connection,
+            sql="SELECT USER_LOGIN, STATE, PARSE_RUN_ID "
+            f"FROM {prefix}.REVIEW WHERE PR_NUM = {pr_num} ORDER BY USER_LOGIN",
+        ),
+    }
+
+
+def _query_all(connection, sql: str) -> list[tuple[Any, ...]]:
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        return [tuple(row) for row in cursor.fetchall()]
+
+
+def _pull_version(
+    connection,
+    database: str,
+    silver_schema: str,
+    pr_num: int,
+) -> tuple[Any, ...]:
+    return _query_one(
+        connection=connection,
+        sql="SELECT TITLE, PARSE_RUN_ID "
+        f"FROM {database}.{silver_schema}.PULL WHERE PR_NUM = {pr_num}",
+    )
 
 
 def _iso_row(row: tuple[Any, ...]) -> tuple[Any, ...]:
