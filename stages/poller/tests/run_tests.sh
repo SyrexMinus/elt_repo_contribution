@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$project_dir"
 
 if docker compose version >/dev/null 2>&1; then
@@ -20,4 +20,4 @@ trap cleanup EXIT
     --entrypoint python3 \
     --volume "${GITHUB_TOKEN_FILE:-${HOME}/.github/token}:/root/.github/token:ro" \
     spark-tests \
-    -m unittest -v stages.poller.test_poller
+    -m unittest -v stages.poller.tests.test_poller
