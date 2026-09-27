@@ -1,0 +1,109 @@
+version: 2
+
+models:
+  - name: fact_pr_directory
+    description: Incrementally replaced pull-request directory facts used by request-time serving queries.
+    data_tests:
+      - not_empty
+      - unique_key:
+          arguments:
+            columns: [repo, pr_num, nest_level, dir]
+    columns:
+      - name: repo
+        description: Repository in owner/name form.
+        data_tests: [not_null]
+      - name: pr_num
+        description: Repository-local pull request number.
+        data_tests: [not_null]
+      - name: nest_level
+        description: Requested directory depth from one through max_directory_depth.
+        data_tests:
+          - not_null
+          - value_between:
+              arguments:
+                min_value: 1
+                max_value: "{{ var('max_directory_depth') }}"
+      - name: dir
+        description: Clamped repository directory path, with root represented as a dot.
+        data_tests: [not_null]
+      - name: user_login
+        description: Pull request author login.
+        data_tests: [not_null]
+      - name: merged_at
+        description: Pull request merge timestamp used by serving-time window filters.
+        data_tests: [not_null]
+      - name: directory_diff
+        description: Added and deleted lines attributed to this directory.
+        data_tests: [not_null, nonnegative]
+      - name: pr_diff
+        description: Added and deleted lines across the complete pull request.
+        data_tests: [not_null, nonnegative]
+      - name: source_updated_at
+        description: Latest GitHub update timestamp of the source pull request.
+        data_tests: [not_null]
+      - name: source_parse_run_id
+        description: Newest Silver pull or file pipeline run represented by the row.
+        data_tests: [not_null]
+
+  - name: fact_time_to_ship
+    description: Fully rebuilt merged pull-request shipping-time facts used by request-time serving queries.
+    data_tests:
+      - not_empty
+      - unique_key:
+          arguments:
+            columns: [repo, pr_num]
+    columns:
+      - name: repo
+        description: Repository in owner/name form.
+        data_tests: [not_null]
+      - name: pr_num
+        description: Repository-local pull request number.
+        data_tests: [not_null]
+      - name: user_login
+        description: Pull request author login.
+        data_tests: [not_null]
+      - name: merged_at
+        description: Pull request merge timestamp used by serving-time window filters.
+        data_tests: [not_null]
+      - name: time_to_ship_minutes
+        description: Whole elapsed minutes from pull request creation through merge.
+        data_tests: [not_null, nonnegative]
+      - name: source_updated_at
+        description: Latest GitHub update timestamp of the source pull request.
+        data_tests: [not_null]
+      - name: source_parse_run_id
+        description: Newest Silver pipeline run represented by the row.
+        data_tests: [not_null]
+
+  - name: fact_review_interactions
+    description: Fully rebuilt merged pull-request and latest-reviewer facts used by request-time serving queries.
+    data_tests:
+      - not_empty
+      - unique_key:
+          arguments:
+            columns: [repo, pr_num, reviewer]
+    columns:
+      - name: repo
+        description: Repository in owner/name form.
+        data_tests: [not_null]
+      - name: pr_num
+        description: Repository-local pull request number.
+        data_tests: [not_null]
+      - name: author
+        description: Pull request author login.
+        data_tests: [not_null]
+      - name: reviewer
+        description: Reviewer login.
+        data_tests: [not_null]
+      - name: review_state
+        description: Latest review state retained by Silver.
+        data_tests: [not_null]
+      - name: merged_at
+        description: Pull request merge timestamp used by serving-time window filters.
+        data_tests: [not_null]
+      - name: source_updated_at
+        description: Latest GitHub update timestamp of the source pull request.
+        data_tests: [not_null]
+      - name: source_parse_run_id
+        description: Newest Silver pull or review pipeline run represented by the row.
+        data_tests: [not_null]

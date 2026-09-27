@@ -1,10 +1,111 @@
-# STUB: Silver source-of-truth tables (README ch.5), provisioned by Terraform.
 version: 2
 
 sources:
   - name: silver
-    schema: SILVER
+    description: Typed latest-state entities produced by the Spark Silver stage.
+    schema: "{{ env_var('DBT_SILVER_SCHEMA', 'SILVER') }}"
     tables:
       - name: pull
+        description: One latest-state row per repository pull request.
+        data_tests:
+          - unique_key:
+              arguments:
+                columns: [repo, pr_num]
+        columns:
+          - name: repo
+            description: Repository in owner/name form.
+            data_type: varchar
+            data_tests: [not_null]
+          - name: pr_num
+            description: Repository-local pull request number.
+            data_type: number(38, 0)
+            data_tests: [not_null]
+          - name: merged_at
+            description: Merge timestamp, or null when the pull request was not merged.
+            data_type: timestamp_ntz
+          - name: user_login
+            description: Pull request author login.
+            data_type: varchar
+            data_tests: [not_null]
+          - name: state
+            description: Latest GitHub pull request state.
+            data_type: varchar
+            data_tests: [not_null]
+          - name: created_at
+            description: Pull request creation timestamp.
+            data_type: timestamp_ntz
+            data_tests: [not_null]
+          - name: updated_at
+            description: Latest GitHub pull request update timestamp.
+            data_type: timestamp_ntz
+            data_tests: [not_null]
+          - name: title
+            description: Latest pull request title.
+            data_type: varchar
+            data_tests: [not_null]
+          - name: parse_run_id
+            description: UTC pipeline run identifier that produced the latest row.
+            data_type: varchar
+            data_tests: [not_null]
       - name: file
+        description: One latest-state row per repository pull request file.
+        data_tests:
+          - unique_key:
+              arguments:
+                columns: [repo, pr_num, filename]
+        columns:
+          - name: repo
+            description: Repository in owner/name form.
+            data_type: varchar
+            data_tests: [not_null]
+          - name: pr_num
+            description: Repository-local pull request number.
+            data_type: number(38, 0)
+            data_tests: [not_null]
+          - name: filename
+            description: Repository-relative file path.
+            data_type: varchar
+            data_tests: [not_null]
+          - name: additions
+            description: Added lines reported by GitHub.
+            data_type: number(38, 0)
+            data_tests:
+              - not_null
+              - nonnegative
+          - name: deletions
+            description: Deleted lines reported by GitHub.
+            data_type: number(38, 0)
+            data_tests:
+              - not_null
+              - nonnegative
+          - name: parse_run_id
+            description: UTC pipeline run identifier that produced the latest row.
+            data_type: varchar
+            data_tests: [not_null]
       - name: review
+        description: One latest review state per repository pull request and reviewer.
+        data_tests:
+          - unique_key:
+              arguments:
+                columns: [repo, pr_num, user_login]
+        columns:
+          - name: repo
+            description: Repository in owner/name form.
+            data_type: varchar
+            data_tests: [not_null]
+          - name: pr_num
+            description: Repository-local pull request number.
+            data_type: number(38, 0)
+            data_tests: [not_null]
+          - name: user_login
+            description: Reviewer login.
+            data_type: varchar
+            data_tests: [not_null]
+          - name: state
+            description: Latest GitHub review state.
+            data_type: varchar
+            data_tests: [not_null]
+          - name: parse_run_id
+            description: UTC pipeline run identifier that produced the latest row.
+            data_type: varchar
+            data_tests: [not_null]

@@ -19,33 +19,42 @@ from pyspark.sql import functions as functions
 from pyspark.sql import types
 
 
+_TABLE_SCHEMAS = {
+    "pull": types.StructType(
+        [
+            types.StructField("repo", types.StringType()),
+            types.StructField("pr_num", types.LongType()),
+            types.StructField("merged_at", types.TimestampType()),
+            types.StructField("user_login", types.StringType()),
+            types.StructField("state", types.StringType()),
+            types.StructField("created_at", types.TimestampType()),
+            types.StructField("updated_at", types.TimestampType()),
+            types.StructField("title", types.StringType()),
+            types.StructField("parse_run_id", types.StringType()),
+        ]
+    ),
+    "file": types.StructType(
+        [
+            types.StructField("repo", types.StringType()),
+            types.StructField("pr_num", types.LongType()),
+            types.StructField("filename", types.StringType()),
+            types.StructField("additions", types.LongType()),
+            types.StructField("deletions", types.LongType()),
+            types.StructField("parse_run_id", types.StringType()),
+        ]
+    ),
+    "review": types.StructType(
+        [
+            types.StructField("repo", types.StringType()),
+            types.StructField("pr_num", types.LongType()),
+            types.StructField("user_login", types.StringType()),
+            types.StructField("state", types.StringType()),
+            types.StructField("parse_run_id", types.StringType()),
+        ]
+    ),
+}
 _TABLE_COLUMNS = {
-    "pull": [
-        "repo",
-        "pr_num",
-        "merged_at",
-        "user_login",
-        "state",
-        "created_at",
-        "updated_at",
-        "title",
-        "parse_run_id",
-    ],
-    "file": [
-        "repo",
-        "pr_num",
-        "filename",
-        "additions",
-        "deletions",
-        "parse_run_id",
-    ],
-    "review": [
-        "repo",
-        "pr_num",
-        "user_login",
-        "state",
-        "parse_run_id",
-    ],
+    table: schema.fieldNames() for table, schema in _TABLE_SCHEMAS.items()
 }
 _PRIMARY_KEYS = {
     "pull": ["repo", "pr_num"],
