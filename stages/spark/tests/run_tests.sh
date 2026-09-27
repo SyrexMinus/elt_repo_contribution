@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$project_dir"
 
 if docker compose version >/dev/null 2>&1; then
-    compose=(docker compose -f stages/spark/docker-compose.test.yml)
+    compose=(docker compose -f stages/spark/tests/docker-compose.test.yml)
 else
-    compose=(docker-compose -f stages/spark/docker-compose.test.yml)
+    compose=(docker-compose -f stages/spark/tests/docker-compose.test.yml)
 fi
 
 cleanup() {
@@ -23,10 +23,10 @@ fi
 
 "${compose[@]}" build spark-tests
 
-tests=(stages.spark.test_silver_job)
+tests=(stages.spark.tests.test_silver_job)
 if [[ "$mode" == "all" ]]; then
     "${compose[@]}" up --detach --wait localstack
-    tests+=(stages.spark.test_silver_job_integration)
+    tests+=(stages.spark.tests.test_silver_job_integration)
 fi
 
 "${compose[@]}" run --rm --no-deps spark-tests \

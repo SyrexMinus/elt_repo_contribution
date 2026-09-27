@@ -2,7 +2,7 @@ FROM spark:3.5.0-scala2.12-java17-python3-ubuntu
 
 USER root
 
-COPY stages/spark/requirements-test.txt /tmp/requirements-test.txt
+COPY stages/spark/tests/requirements-test.txt /tmp/requirements-test.txt
 RUN python3 -m pip install --no-cache-dir -r /tmp/requirements-test.txt
 
 RUN python3 -c "from urllib.request import urlretrieve; urlretrieve('https://repo1.maven.org/maven2/net/snowflake/spark-snowflake_2.12/3.2.2-spark_3.5/spark-snowflake_2.12-3.2.2-spark_3.5.jar', '/opt/spark/jars/spark-snowflake_2.12-3.2.2-spark_3.5.jar')" \

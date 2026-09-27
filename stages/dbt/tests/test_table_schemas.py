@@ -3,7 +3,7 @@ from unittest import TestCase
 
 import yaml
 
-from stages.spark.snowflake_test_helpers import SILVER_TABLE_SCHEMAS
+from stages.spark.tests.snowflake_test_helpers import SILVER_TABLE_SCHEMAS
 
 
 class TableSchemasTest(TestCase):

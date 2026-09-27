@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from unittest import TestCase
 
-from stages.spark.snowflake_test_helpers import execute, set_up_snowflake
+from stages.spark.tests.snowflake_test_helpers import execute, set_up_snowflake
 
 REPOSITORY = "salute-developers/smart_app_framework"
 INITIAL_RUN_ID = "20260926T100000000000Z"

@@ -18,7 +18,7 @@ from pyspark.sql import SparkSession
 
 from stages.poller.poller import poller
 from stages.spark import silver_job
-from stages.spark.snowflake_test_helpers import set_up_snowflake
+from stages.spark.tests.snowflake_test_helpers import set_up_snowflake
 
 REPOSITORY = "salute-developers/smart_app_framework"
 BRONZE_BUCKET = "bronze-bucket"

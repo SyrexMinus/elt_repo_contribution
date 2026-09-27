@@ -11,8 +11,8 @@ services:
 
   spark-tests:
     build:
-      context: ../..
-      dockerfile: stages/spark/Dockerfile.test
+      context: ../../..
+      dockerfile: stages/spark/tests/Dockerfile.test
     entrypoint:
       - /bin/bash
       - -c
