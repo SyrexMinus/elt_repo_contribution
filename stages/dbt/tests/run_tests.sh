@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-venv_dir="stages/dbt/tests/.venv"
+venv_dir="$PWD/stages/dbt/tests/.venv"
 if [[ ! -x "$venv_dir/bin/python" ]]; then
     python3 -m venv "$venv_dir"
 fi
