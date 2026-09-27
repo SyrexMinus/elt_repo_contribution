@@ -4,20 +4,13 @@ set -euo pipefail
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$project_dir"
 
-if docker compose version >/dev/null 2>&1; then
-    compose=(docker compose -f stages/spark/tests/docker-compose.test.yml)
-else
-    compose=(docker-compose -f stages/spark/tests/docker-compose.test.yml)
+venv_dir="$project_dir/stages/poller/tests/.venv"
+if [[ ! -x "$venv_dir/bin/python" ]]; then
+    python3.11 -m venv "$venv_dir"
 fi
+"$venv_dir/bin/python" -m pip install \
+    --quiet \
+    --disable-pip-version-check \
+    --requirement stages/poller/tests/requirements-test.txt
 
-cleanup() {
-    "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
-
-"${compose[@]}" build spark-tests
-"${compose[@]}" run --rm --no-deps \
-    --entrypoint python3 \
-    --volume "${GITHUB_TOKEN_FILE:-${HOME}/.github/token}:/root/.github/token:ro" \
-    spark-tests \
-    -m unittest -v stages.poller.tests.test_poller
+exec "$venv_dir/bin/python" -m unittest -v stages.poller.tests.test_poller
