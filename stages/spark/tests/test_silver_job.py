@@ -202,7 +202,7 @@ class SilverJobTest(TestCase):
             s3 = _S3(
                 {
                     (ARTIFACTS_BUCKET, manifest_key): _manifest_bytes(
-                        [bronze_path.as_uri()],
+                        uris=[bronze_path.as_uri()],
                         record_count=len(bronze_recs),
                     )
                 }
@@ -276,7 +276,7 @@ class SilverJobTest(TestCase):
             s3 = _S3(
                 {
                     (ARTIFACTS_BUCKET, manifest_key): _manifest_bytes(
-                        [bronze_path.as_uri()],
+                        uris=[bronze_path.as_uri()],
                         record_count=len(bronze_recs),
                     )
                 }
@@ -336,7 +336,12 @@ class SilverJobTest(TestCase):
     ) -> None:
         manifest_key = f"pipeline-artifacts/{RUN_ID}/stage1/output.parquet"
         s3 = _S3(
-            {(ARTIFACTS_BUCKET, manifest_key): _manifest_bytes([], record_count=0)}
+            {
+                (ARTIFACTS_BUCKET, manifest_key): _manifest_bytes(
+                    uris=[],
+                    record_count=0,
+                )
+            }
         )
         cloudwatch = _CloudWatch()
 
@@ -499,10 +504,22 @@ def _assert_metrics(
         all(call["Namespace"] == CLOUDWATCH_NAMESPACE for call in cloudwatch.calls)
     )
     metrics = [metric for call in cloudwatch.calls for metric in call["MetricData"]]
-    test.assertEqual(_metric_values(metrics, "job_start_count"), [1])
-    test.assertEqual(_metric_values(metrics, "inflight_job_count"), [1, 0])
-    test.assertEqual(_metric_values(metrics, "corrupted_count"), [corrupted_count])
-    test.assertEqual(len(_metric_values(metrics, "job_duration")), 1)
+    test.assertEqual(
+        _metric_values(metrics=metrics, name="job_start_count"),
+        [1],
+    )
+    test.assertEqual(
+        _metric_values(metrics=metrics, name="inflight_job_count"),
+        [1, 0],
+    )
+    test.assertEqual(
+        _metric_values(metrics=metrics, name="corrupted_count"),
+        [corrupted_count],
+    )
+    test.assertEqual(
+        len(_metric_values(metrics=metrics, name="job_duration")),
+        1,
+    )
     finish = [
         metric for metric in metrics if metric["MetricName"] == "job_finish_status"
     ]

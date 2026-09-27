@@ -30,9 +30,9 @@ class SilverJobIntegrationTest(TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         set_up_snowflake(
-            cls,
-            os.environ["SNOWFLAKE_DATABASE"],
-            f"SILVER_TEST_{uuid.uuid4().hex.upper()}",
+            test_case=cls,
+            database=os.environ["SNOWFLAKE_DATABASE"],
+            silver_schema=f"SILVER_TEST_{uuid.uuid4().hex.upper()}",
         )
 
         endpoint = os.environ["LOCALSTACK_ENDPOINT"]
@@ -92,10 +92,13 @@ class SilverJobIntegrationTest(TestCase):
                 cloudwatch=cloudwatch,
             )
 
-        bronze_recs = _bronze_records(self.s3, initial_run_id)
+        bronze_recs = _bronze_records(s3=self.s3, run_id=initial_run_id)
         bronze_source_counts = Counter(record["entity"] for record in bronze_recs)
         deduplicated_counts = _deduplicated_counts(bronze_recs)
-        initial_event = self._event(initial_run_id, poller_result["artifact_uri"])
+        initial_event = self._event(
+            run_id=initial_run_id,
+            artifact_uri=poller_result["artifact_uri"],
+        )
         silver_metrics_offset = len(cloudwatch.calls)
 
         initial_result = silver_job.silver(
@@ -105,7 +108,8 @@ class SilverJobIntegrationTest(TestCase):
             cloudwatch=cloudwatch,
         )
         snowflake_counts_after_insert = {
-            table: _count(self.snowflake, table) for table in ("PULL", "FILE", "REVIEW")
+            table: _count(connection=self.snowflake, table=table)
+            for table in ("PULL", "FILE", "REVIEW")
         }
 
         with self.subTest("Backfill writes deduplicated counts"):
@@ -124,8 +128,8 @@ class SilverJobIntegrationTest(TestCase):
             self.assertEqual(
                 _iso_row(
                     _query_one(
-                        self.snowflake,
-                        "SELECT REPO, PR_NUM, STATE, TITLE, USER_LOGIN, "
+                        connection=self.snowflake,
+                        sql="SELECT REPO, PR_NUM, STATE, TITLE, USER_LOGIN, "
                         "CREATED_AT, UPDATED_AT, MERGED_AT, PARSE_RUN_ID "
                         f"FROM {self.database}.{self.silver_schema}.PULL WHERE PR_NUM = 1",
                     )
@@ -144,8 +148,8 @@ class SilverJobIntegrationTest(TestCase):
             )
             self.assertEqual(
                 _query_one(
-                    self.snowflake,
-                    "SELECT FILENAME, ADDITIONS, DELETIONS "
+                    connection=self.snowflake,
+                    sql="SELECT FILENAME, ADDITIONS, DELETIONS "
                     f"FROM {self.database}.{self.silver_schema}.FILE "
                     "WHERE PR_NUM = 210 "
                     "AND FILENAME = 'core/utils/stats_timer.py'",
@@ -154,8 +158,8 @@ class SilverJobIntegrationTest(TestCase):
             )
             self.assertEqual(
                 _query_one(
-                    self.snowflake,
-                    "SELECT USER_LOGIN, STATE "
+                    connection=self.snowflake,
+                    sql="SELECT USER_LOGIN, STATE "
                     f"FROM {self.database}.{self.silver_schema}.REVIEW "
                     "WHERE PR_NUM = 210 AND USER_LOGIN = 'dangerink'",
                 ),
@@ -170,7 +174,10 @@ class SilverJobIntegrationTest(TestCase):
                         "output": record["output_row_count"],
                         "corrupted": record["corrupted_row_count"],
                     }
-                    for record in _artifact_records(self.s3, initial_run_id)
+                    for record in _artifact_records(
+                        s3=self.s3,
+                        run_id=initial_run_id,
+                    )
                 },
                 {
                     table: {
@@ -182,8 +189,8 @@ class SilverJobIntegrationTest(TestCase):
                 },
             )
             _assert_success_metrics(
-                self,
-                cloudwatch.calls[silver_metrics_offset:],
+                test=self,
+                calls=cloudwatch.calls[silver_metrics_offset:],
             )
 
         with self.subTest("Repeated event does not duplicate rows"):
@@ -195,7 +202,7 @@ class SilverJobIntegrationTest(TestCase):
             )
             self.assertEqual(
                 {
-                    table: _count(self.snowflake, table)
+                    table: _count(connection=self.snowflake, table=table)
                     for table in ("PULL", "FILE", "REVIEW")
                 },
                 snowflake_counts_after_insert,
@@ -213,11 +220,14 @@ class SilverJobIntegrationTest(TestCase):
             "Feature/new metrics [integration update]"
         )
         increment_artifact_uri = _store_increment(
-            self.s3,
-            newer_run_id,
-            updated_pull_rec,
+            s3=self.s3,
+            run_id=newer_run_id,
+            pull_rec=updated_pull_rec,
         )
-        newer_event = self._event(newer_run_id, increment_artifact_uri)
+        newer_event = self._event(
+            run_id=newer_run_id,
+            artifact_uri=increment_artifact_uri,
+        )
 
         with self.subTest("Newer event updates existing row"):
             silver_job.silver(
@@ -228,15 +238,15 @@ class SilverJobIntegrationTest(TestCase):
             )
             self.assertEqual(
                 _query_one(
-                    self.snowflake,
-                    "SELECT TITLE, PARSE_RUN_ID "
+                    connection=self.snowflake,
+                    sql="SELECT TITLE, PARSE_RUN_ID "
                     f"FROM {self.database}.{self.silver_schema}.PULL WHERE PR_NUM = 1",
                 ),
                 ("Feature/new metrics [integration update]", newer_run_id),
             )
             self.assertEqual(
                 {
-                    table: _count(self.snowflake, table)
+                    table: _count(connection=self.snowflake, table=table)
                     for table in ("PULL", "FILE", "REVIEW")
                 },
                 snowflake_counts_after_insert,
@@ -247,7 +257,10 @@ class SilverJobIntegrationTest(TestCase):
                         record["source_row_count"],
                         record["output_row_count"],
                     )
-                    for record in _artifact_records(self.s3, newer_run_id)
+                    for record in _artifact_records(
+                        s3=self.s3,
+                        run_id=newer_run_id,
+                    )
                 },
                 {"pull": (1, 1), "file": (0, 0), "review": (0, 0)},
             )
@@ -261,15 +274,15 @@ class SilverJobIntegrationTest(TestCase):
             )
             self.assertEqual(
                 _query_one(
-                    self.snowflake,
-                    "SELECT TITLE, PARSE_RUN_ID "
+                    connection=self.snowflake,
+                    sql="SELECT TITLE, PARSE_RUN_ID "
                     f"FROM {self.database}.{self.silver_schema}.PULL WHERE PR_NUM = 1",
                 ),
                 ("Feature/new metrics [integration update]", newer_run_id),
             )
             self.assertEqual(
                 {
-                    table: _count(self.snowflake, table)
+                    table: _count(connection=self.snowflake, table=table)
                     for table in ("PULL", "FILE", "REVIEW")
                 },
                 snowflake_counts_after_insert,
@@ -383,8 +396,8 @@ def _store_increment(s3, run_id: str, pull_rec: dict[str, Any]) -> str:
 
 def _count(connection, table: str) -> int:
     return _query_one(
-        connection,
-        f"SELECT COUNT(*) FROM {SilverJobIntegrationTest.database}."
+        connection=connection,
+        sql=f"SELECT COUNT(*) FROM {SilverJobIntegrationTest.database}."
         f"{SilverJobIntegrationTest.silver_schema}.{table}",
     )[0]
 

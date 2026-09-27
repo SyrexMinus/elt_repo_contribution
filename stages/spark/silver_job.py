@@ -99,10 +99,16 @@ def silver(
     status = "fail"
     corrupted_count = 0
     cached_frames: list[DataFrame] = []
-    _report_job_started(cloudwatch, config.cloudwatch_namespace)
+    _report_job_started(
+        cloudwatch=cloudwatch,
+        namespace=config.cloudwatch_namespace,
+    )
 
     try:
-        manifest = _read_parquet(s3, config.stage1_artifact_uri)
+        manifest = _read_parquet(
+            s3=s3,
+            uri=config.stage1_artifact_uri,
+        )
         source_row_count = sum(record["record_count"] for record in manifest)
         source_counts = {table: 0 for table in _TABLE_COLUMNS}
         output_counts = {table: 0 for table in _TABLE_COLUMNS}
@@ -269,14 +275,14 @@ def _parse_records(lines: DataFrame) -> DataFrame:
     common_valid = (
         functions.col("entity").isin(*_TABLE_COLUMNS)
         & _is_nonempty_string("parse_run_id")
-        & _is_json_string("raw", "run_id")
+        & _is_json_string(column="raw", field="run_id")
         & functions.col("parse_run_id").rlike(r"^\d{8}T\d{12}Z$")
         & functions.col("_parsed_run_id").isNotNull()
         & _is_nonempty_string("repo")
-        & _is_json_string("raw", "repo")
+        & _is_json_string(column="raw", field="repo")
         & functions.col("pr_num").isNotNull()
         & (functions.col("pr_num") > 0)
-        & _is_json_object("raw", "payload")
+        & _is_json_object(column="raw", field="payload")
         & functions.col("_payload_source").isNotNull()
         & functions.col("_payload").isNotNull()
     )
@@ -285,19 +291,22 @@ def _parse_records(lines: DataFrame) -> DataFrame:
             functions.col("entity") == "pull",
             common_valid
             & _is_nonempty_string("user_login")
-            & _is_json_string("_payload_source", "login")
+            & _is_json_string(column="_payload_source", field="login")
             & _is_nonempty_string("state")
-            & _is_json_string("_payload_source", "state")
+            & _is_json_string(column="_payload_source", field="state")
             & _is_nonempty_string("title")
-            & _is_json_string("_payload_source", "title")
-            & _is_json_string("_payload_source", "created_at")
+            & _is_json_string(column="_payload_source", field="title")
+            & _is_json_string(column="_payload_source", field="created_at")
             & functions.col("created_at").isNotNull()
-            & _is_json_string("_payload_source", "updated_at")
+            & _is_json_string(column="_payload_source", field="updated_at")
             & functions.col("updated_at").isNotNull()
             & (
                 functions.col("_merged_at_source").isNull()
                 | (
-                    _is_json_string("_payload_source", "merged_at")
+                    _is_json_string(
+                        column="_payload_source",
+                        field="merged_at",
+                    )
                     & functions.col("merged_at").isNotNull()
                 )
             ),
@@ -306,7 +315,7 @@ def _parse_records(lines: DataFrame) -> DataFrame:
             functions.col("entity") == "file",
             common_valid
             & _is_nonempty_string("filename")
-            & _is_json_string("_payload_source", "filename")
+            & _is_json_string(column="_payload_source", field="filename")
             & functions.col("additions").isNotNull()
             & (functions.col("additions") >= 0)
             & functions.col("deletions").isNotNull()
@@ -316,10 +325,10 @@ def _parse_records(lines: DataFrame) -> DataFrame:
             functions.col("entity") == "review",
             common_valid
             & _is_nonempty_string("user_login")
-            & _is_json_string("_payload_source", "login")
+            & _is_json_string(column="_payload_source", field="login")
             & _is_nonempty_string("state")
-            & _is_json_string("_payload_source", "state")
-            & _is_json_string("_payload_source", "submitted_at")
+            & _is_json_string(column="_payload_source", field="state")
+            & _is_json_string(column="_payload_source", field="submitted_at")
             & functions.col("submitted_at").isNotNull(),
         )
         .otherwise(functions.lit(False))
@@ -440,12 +449,16 @@ def _merge_tables(
             f"WHEN NOT MATCHED THEN INSERT ({names}) VALUES ({values})"
         )
         try:
-            _run_snowflake_query(frame.sparkSession, snowflake_options, merge)
+            _run_snowflake_query(
+                spark=frame.sparkSession,
+                snowflake_options=snowflake_options,
+                query=merge,
+            )
         finally:
             _run_snowflake_query(
-                frame.sparkSession,
-                snowflake_options,
-                f"DROP TABLE IF EXISTS {stage}",
+                spark=frame.sparkSession,
+                snowflake_options=snowflake_options,
+                query=f"DROP TABLE IF EXISTS {stage}",
             )
 
 
