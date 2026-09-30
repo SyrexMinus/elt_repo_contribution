@@ -1,0 +1,3 @@
+-r ../../../build/airflow/requirements.txt
+-r ../../poller/tests/requirements-test.txt
+boto3==1.40.25

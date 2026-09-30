@@ -16,6 +16,11 @@ stages/dbt/tests/run_tests.sh \
     2> dbt_test_errors.log &
 dbt_pid=$!
 
+stages/airflow_dags/tests/run_tests.sh \
+    > airflow_test_output.log \
+    2> airflow_test_errors.log &
+airflow_pid=$!
+
 status=0
 
 if ! wait "$poller_pid"; then
@@ -30,6 +35,11 @@ fi
 
 if ! wait "$dbt_pid"; then
     echo "DBT tests failed; see dbt_test_errors.log" >&2
+    status=1
+fi
+
+if ! wait "$airflow_pid"; then
+    echo "Airflow tests failed; see airflow_test_errors.log" >&2
     status=1
 fi
 

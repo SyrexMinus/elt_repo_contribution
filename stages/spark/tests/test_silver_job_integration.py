@@ -24,6 +24,7 @@ REPOSITORY = "salute-developers/smart_app_framework"
 BRONZE_BUCKET = "bronze-bucket"
 ARTIFACTS_BUCKET = "artifacts-bucket"
 CLOUDWATCH_NAMESPACE = "RepoContribution/IntegrationTest"
+SNOWFLAKE_PASSWORD_SSM_PARAMETER = "/test/snowflake-password"
 
 
 class SilverJobIntegrationTest(TestCase):
@@ -44,6 +45,7 @@ class SilverJobIntegrationTest(TestCase):
         }
         cls.s3 = boto3.client("s3", **client_options)
         cls.cloudwatch_client = boto3.client("cloudwatch", **client_options)
+        cls.ssm = _SSM(os.environ["SNOWFLAKE_PASSWORD"])
         cls.s3.create_bucket(Bucket=BRONZE_BUCKET)
         cls.s3.create_bucket(Bucket=ARTIFACTS_BUCKET)
 
@@ -105,6 +107,7 @@ class SilverJobIntegrationTest(TestCase):
             event=initial_event,
             spark=self.spark,
             s3=self.s3,
+            ssm=self.ssm,
             cloudwatch=cloudwatch,
         )
         snowflake_counts_after_insert = {
@@ -198,6 +201,7 @@ class SilverJobIntegrationTest(TestCase):
                 event=initial_event,
                 spark=self.spark,
                 s3=self.s3,
+                ssm=self.ssm,
                 cloudwatch=cloudwatch,
             )
             self.assertEqual(
@@ -239,6 +243,7 @@ class SilverJobIntegrationTest(TestCase):
                 event=snapshot_update_event,
                 spark=self.spark,
                 s3=self.s3,
+                ssm=self.ssm,
                 cloudwatch=cloudwatch,
             )
             self.assertEqual(
@@ -270,6 +275,7 @@ class SilverJobIntegrationTest(TestCase):
                 event=initial_event,
                 spark=self.spark,
                 s3=self.s3,
+                ssm=self.ssm,
                 cloudwatch=cloudwatch,
             )
             self.assertEqual(
@@ -311,10 +317,12 @@ class SilverJobIntegrationTest(TestCase):
             "stage1_artifact_uri": artifact_uri,
             "artifacts_bucket": ARTIFACTS_BUCKET,
             "cloudwatch_namespace": CLOUDWATCH_NAMESPACE,
+            "snowflake_password_ssm_parameter": (
+                SNOWFLAKE_PASSWORD_SSM_PARAMETER
+            ),
             "snowflake_options": {
                 "sfURL": os.environ["SNOWFLAKE_URL"],
                 "sfUser": os.environ["SNOWFLAKE_USER"],
-                "sfPassword": os.environ["SNOWFLAKE_PASSWORD"],
                 "sfDatabase": self.database,
                 "sfSchema": self.silver_schema,
                 "sfWarehouse": os.environ["SNOWFLAKE_WAREHOUSE"],
@@ -552,6 +560,11 @@ def _assert_success_metrics(
         metric for metric in metrics if metric["MetricName"] == "job_finish_status"
     ]
     test.assertEqual(len(finish), 1)
+    for metric in metrics:
+        test.assertIn(
+            {"Name": "stage", "Value": "silver"},
+            metric["Dimensions"],
+        )
     test.assertIn(
         {"Name": "status", "Value": "success"},
         finish[0]["Dimensions"],
@@ -566,3 +579,11 @@ class _RecordingCloudWatch:
     def put_metric_data(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
         return self.client.put_metric_data(**kwargs)
+
+
+class _SSM:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def get_parameter(self, **_: Any) -> dict[str, dict[str, str]]:
+        return {"Parameter": {"Value": self.value}}

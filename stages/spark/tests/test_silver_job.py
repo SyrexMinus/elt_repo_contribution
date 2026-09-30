@@ -16,8 +16,10 @@ from stages.spark import silver_job
 
 ARTIFACTS_BUCKET = "artifacts-bucket"
 CLOUDWATCH_NAMESPACE = "RepoContribution/Test"
-REPOSITORY = "example/repository"
+REPOSITORY = "salute-developers/smart_app_framework"
 RUN_ID = "20260916T120000000000Z"
+SNOWFLAKE_PASSWORD = "snowflake-secret"
+SNOWFLAKE_PASSWORD_SSM_PARAMETER = "/test/snowflake-password"
 
 
 class SilverJobTest(TestCase):
@@ -208,12 +210,14 @@ class SilverJobTest(TestCase):
                 }
             )
             event = _event(manifest_key)
+            ssm = _SSM(SNOWFLAKE_PASSWORD)
 
             with patch.object(silver_job, "_merge_tables") as merge:
                 result = silver_job.silver(
                     event=event,
                     spark=self.spark,
                     s3=s3,
+                    ssm=ssm,
                     cloudwatch=_CloudWatch(),
                 )
 
@@ -225,8 +229,21 @@ class SilverJobTest(TestCase):
         )
         self.assertEqual(
             merge.call_args.kwargs["snowflake_options"],
-            event["snowflake_options"],
+            {
+                **event["snowflake_options"],
+                "sfPassword": SNOWFLAKE_PASSWORD,
+            },
         )
+        self.assertEqual(
+            ssm.calls,
+            [
+                {
+                    "Name": SNOWFLAKE_PASSWORD_SSM_PARAMETER,
+                    "WithDecryption": True,
+                }
+            ],
+        )
+        self.assertNotIn("sfPassword", event["snowflake_options"])
 
     def test_silver_quarantines_corrupted_rows_before_snowflake_write(self) -> None:
         bronze_recs = [
@@ -290,6 +307,7 @@ class SilverJobTest(TestCase):
                     event=_event(manifest_key),
                     spark=self.spark,
                     s3=s3,
+                    ssm=_SSM(SNOWFLAKE_PASSWORD),
                     cloudwatch=cloudwatch,
                 )
 
@@ -350,6 +368,7 @@ class SilverJobTest(TestCase):
                 event=_event(manifest_key),
                 spark=self.spark,
                 s3=s3,
+                ssm=_SSM(SNOWFLAKE_PASSWORD),
                 cloudwatch=cloudwatch,
             )
 
@@ -448,13 +467,13 @@ def _event(manifest_key: str) -> dict[str, Any]:
         "stage1_artifact_uri": f"s3://{ARTIFACTS_BUCKET}/{manifest_key}",
         "artifacts_bucket": ARTIFACTS_BUCKET,
         "cloudwatch_namespace": CLOUDWATCH_NAMESPACE,
+        "snowflake_password_ssm_parameter": SNOWFLAKE_PASSWORD_SSM_PARAMETER,
         "snowflake_options": {
-            "sfURL": "unused",
-            "sfUser": "unused",
-            "sfPassword": "unused",
-            "sfDatabase": "unused",
-            "sfSchema": "unused",
-            "sfWarehouse": "unused",
+            "sfURL": "test-account.snowflakecomputing.com",
+            "sfUser": "ELT_PIPELINE",
+            "sfDatabase": "TEST_DB",
+            "sfSchema": "SILVER",
+            "sfWarehouse": "TEST_WH",
         },
     }
 
@@ -528,6 +547,11 @@ def _assert_metrics(
     ]
     test.assertEqual(len(finish), 1)
     test.assertEqual(finish[0]["Value"], 1)
+    for metric in metrics:
+        test.assertIn(
+            {"Name": "stage", "Value": "silver"},
+            metric["Dimensions"],
+        )
     test.assertIn(
         {"Name": "status", "Value": status},
         finish[0]["Dimensions"],
@@ -577,3 +601,13 @@ class _CloudWatch:
 
     def put_metric_data(self, **kwargs: Any) -> None:
         self.calls.append(kwargs)
+
+
+class _SSM:
+    def __init__(self, value: str) -> None:
+        self.value = value
+        self.calls: list[dict[str, Any]] = []
+
+    def get_parameter(self, **kwargs: Any) -> dict[str, dict[str, str]]:
+        self.calls.append(kwargs)
+        return {"Parameter": {"Value": self.value}}

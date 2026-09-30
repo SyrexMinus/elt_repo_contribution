@@ -5,11 +5,13 @@ import json
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 from unittest import TestCase
+from unittest.mock import call, patch
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import requests
 from pyarrow import parquet
 
+from stages.poller import poller as poller_module
 from stages.poller.poller import poller
 
 REPOSITORY = "salute-developers/smart_app_framework"
@@ -355,11 +357,101 @@ class PollerTest(TestCase):
             corrupted_count=0,
         )
 
+    def test_poller_retries_rate_limited_request(self) -> None:
+        run_id = "rate-limited-run"
+        pull = _pull(number=401, updated_at="2026-09-12T00:00:00Z")
+        s3 = _S3()
+        cloudwatch = _CloudWatch()
+        github = _GitHub(
+            {
+                (_path("pulls"), 1): [
+                    _Reply(
+                        payload={"message": "secondary rate limit"},
+                        status=429,
+                        headers={"Retry-After": "2"},
+                    ),
+                    _Reply([pull]),
+                ],
+                (_path("pulls/401/files"), 1): [
+                    _Reply(
+                        payload={"message": "primary rate limit"},
+                        status=403,
+                        headers={
+                            "X-RateLimit-Remaining": "0",
+                            "X-RateLimit-Reset": "105",
+                        },
+                    ),
+                    _Reply([]),
+                ],
+                (_path("pulls/401/reviews"), 1): _Reply([]),
+            }
+        )
+
+        with (
+            patch.object(poller_module.time, "time", return_value=100),
+            patch.object(poller_module.time, "sleep") as sleep,
+        ):
+            result = poller(
+                event=_event(
+                    run_id=run_id,
+                    mode="incremental",
+                    batch_max_pull_requests=1000,
+                ),
+                s3=s3,
+                github=github,
+                cloudwatch=cloudwatch,
+            )
+
+        self.assertEqual(sleep.call_args_list, [call(2), call(6)])
+        self.assertEqual(
+            [urlsplit(url).path for url in github.calls],
+            [
+                _path("pulls"),
+                _path("pulls"),
+                _path("pulls/401/files"),
+                _path("pulls/401/files"),
+                _path("pulls/401/reviews"),
+            ],
+        )
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["pull_requests"], 1)
+        self.assertEqual(
+            [
+                (record["entity"], record["pr_num"])
+                for record in _bronze_records(s3=s3, run_id=run_id)
+            ],
+            [("pull", 401)],
+        )
+        self.assertFalse(
+            any(
+                bucket == ARTIFACTS_BUCKET
+                and key.startswith(f"corrupted-artifacts/{run_id}/")
+                for bucket, key in s3.objects
+            )
+        )
+        self.assertEqual(
+            _state_artifact(s3)["pull_requests"]["401"],
+            {
+                "updated_at": "2026-09-12T00:00:00Z",
+                "merged": False,
+            },
+        )
+        _assert_metrics(
+            test=self,
+            cloudwatch=cloudwatch,
+            status="success",
+            corrupted_count=0,
+        )
+
     def test_poller_quarantines_corrupted_response(self) -> None:
         cases = {
             "non-200": _Reply(
                 payload={"message": "server error"},
                 status=500,
+            ),
+            "forbidden": _Reply(
+                payload={"message": "forbidden"},
+                status=403,
             ),
             "empty-body": _Reply(payload=None, empty_body=True),
         }
@@ -381,7 +473,10 @@ class PollerTest(TestCase):
                     batch_max_pull_requests=1000,
                 )
 
-                with self.assertRaises(RuntimeError):
+                with (
+                    patch.object(poller_module.time, "sleep") as sleep,
+                    self.assertRaises(RuntimeError),
+                ):
                     poller(
                         event=event,
                         s3=s3,
@@ -389,6 +484,7 @@ class PollerTest(TestCase):
                         cloudwatch=cloudwatch,
                     )
 
+                sleep.assert_not_called()
                 quarantine_key = f"corrupted-artifacts/{run_id}/stage1/output.parquet"
                 records = _artifact_records(
                     s3=s3,
@@ -600,6 +696,11 @@ def _assert_metrics(
     ]
     test.assertEqual(len(finish), 1)
     test.assertEqual(finish[0]["Value"], 1)
+    for metric in metrics:
+        test.assertIn(
+            {"Name": "stage", "Value": "poller"},
+            metric["Dimensions"],
+        )
     test.assertIn(
         {"Name": "status", "Value": status},
         finish[0]["Dimensions"],
@@ -620,9 +721,10 @@ class _Reply:
         status: int = 200,
         next_url: str | None = None,
         empty_body: bool = False,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.status_code = status
-        self.headers = {}
+        self.headers = dict(headers or {})
         self.content = b"" if empty_body else _json_bytes(payload)
         if next_url:
             self.headers["Link"] = f'<{next_url}>; rel="next"'
@@ -634,9 +736,13 @@ class _Reply:
 class _GitHub:
     def __init__(
         self,
-        routes: dict[tuple[str, int], _Reply],
+        routes: dict[tuple[str, int], _Reply | list[_Reply]],
     ) -> None:
-        self.routes = dict(routes)
+        self.routes = {
+            key: replies if isinstance(replies, list) else [replies]
+            for key, replies in routes.items()
+        }
+        self.calls: list[str] = []
 
     def get(
         self,
@@ -647,10 +753,11 @@ class _GitHub:
     ) -> _Reply:
         if params:
             url = f"{url}?{urlencode(params)}"
+        self.calls.append(url)
         parsed = urlsplit(url)
         query = parse_qs(parsed.query)
         page = int(query["page"][0]) if "page" in query else 1
-        return self.routes.pop((parsed.path, page))
+        return self.routes[(parsed.path, page)].pop(0)
 
 
 class _S3:
