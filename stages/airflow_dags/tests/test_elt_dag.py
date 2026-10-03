@@ -4,10 +4,11 @@ import io
 import json
 import os
 import subprocess
+from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any, Iterator
+from typing import Any, Self
 from unittest import TestCase
 from unittest.mock import patch
 from urllib.parse import urlsplit
@@ -22,7 +23,6 @@ GITHUB_TOKEN = "github-secret"
 SNOWFLAKE_PASSWORD = "snowflake-secret"
 GITHUB_TOKEN_SSM_PARAMETER = "/test/github-token"
 SNOWFLAKE_PASSWORD_SSM_PARAMETER = "/test/snowflake-password"
-LOGICAL_DATE = datetime(2026, 9, 30, 8, 7, 6, 123456, tzinfo=timezone.utc)
 RUN_ID = "20260930T080706123456Z"
 
 
@@ -190,6 +190,8 @@ class EltDagTest(TestCase):
             emr_states=["SUCCESS"],
         ) as runtime:
             context = _context(mode="backfill")
+            context["logical_date"] = datetime(2026, 9, 29, tzinfo=timezone.utc)
+            context["dag_run"].logical_date = context["logical_date"]
             poller_result = elt_dag._poll(**context)
             context["ti"].values["poller"] = poller_result
             silver_result = elt_dag._silver(**context)
@@ -220,8 +222,7 @@ class EltDagTest(TestCase):
                     "run_id": RUN_ID,
                     "repo": REPOSITORY,
                     "s3_uri": (
-                        "s3://bronze-bucket/"
-                        f"{REPOSITORY}/{RUN_ID}/batch-00000.jsonl"
+                        f"s3://bronze-bucket/{REPOSITORY}/{RUN_ID}/batch-00000.jsonl"
                     ),
                     "pull_request_count": 2,
                     "record_count": 6,
@@ -298,7 +299,7 @@ class EltDagTest(TestCase):
             state=state,
             emr_states=["PENDING", "RUNNING", "FAILED"],
             emr_state_details="driver failed",
-        ) as runtime:
+        ):
             context = _context(mode="incremental")
             context["ti"].values["poller"] = elt_dag._poll(**context)
             with self.assertRaisesRegex(
@@ -405,9 +406,7 @@ def _mock_runtime(
                 create=True,
             )
         )
-        stack.enter_context(
-            patch.object(elt_dag, "subprocess", process, create=True)
-        )
+        stack.enter_context(patch.object(elt_dag, "subprocess", process, create=True))
         stack.enter_context(
             patch.object(
                 elt_dag,
@@ -421,8 +420,10 @@ def _mock_runtime(
 
 def _context(mode: str) -> dict[str, Any]:
     return {
-        "dag_run": SimpleNamespace(logical_date=LOGICAL_DATE),
-        "logical_date": LOGICAL_DATE,
+        "dag_run": SimpleNamespace(
+            run_after=datetime(2026, 9, 30, 8, 7, 6, 123456, tzinfo=timezone.utc),
+            logical_date=None,
+        ),
         "params": {"mode": mode},
         "ti": _TaskInstance(),
     }
@@ -438,22 +439,16 @@ def _environment() -> dict[str, str]:
         "DBT_SILVER_SCHEMA": "SILVER",
         "GITHUB_TOKEN_SSM_PARAMETER": GITHUB_TOKEN_SSM_PARAMETER,
         "REPOSITORIES": REPOSITORY,
-        "SILVER_JOB_S3_URI": (
-            f"s3://{ARTIFACTS_BUCKET}/jobs/spark/silver_job.py"
-        ),
+        "SILVER_JOB_S3_URI": (f"s3://{ARTIFACTS_BUCKET}/jobs/spark/silver_job.py"),
         "SNOWFLAKE_ACCOUNT": "test-account",
         "SNOWFLAKE_DATABASE": "TEST_DB",
-        "SNOWFLAKE_PASSWORD_SSM_PARAMETER": (
-            SNOWFLAKE_PASSWORD_SSM_PARAMETER
-        ),
+        "SNOWFLAKE_PASSWORD_SSM_PARAMETER": (SNOWFLAKE_PASSWORD_SSM_PARAMETER),
         "SNOWFLAKE_ROLE": "ELT_PIPELINE_ROLE",
         "SNOWFLAKE_URL": "test-account.snowflakecomputing.com",
         "SNOWFLAKE_USER": "ELT_PIPELINE",
         "SNOWFLAKE_WAREHOUSE": "TEST_WH",
         "SPARK_APPLICATION_ID": "application-1",
-        "SPARK_EXECUTION_ROLE_ARN": (
-            "arn:aws:iam::123456789012:role/spark-execution"
-        ),
+        "SPARK_EXECUTION_ROLE_ARN": ("arn:aws:iam::123456789012:role/spark-execution"),
     }
 
 
@@ -477,8 +472,7 @@ def _bronze_records(
     for artifact in _artifact_records(s3, manifest_key):
         bucket, key = _s3_location(artifact["s3_uri"])
         records.extend(
-            json.loads(line)
-            for line in s3.objects[(bucket, key)].splitlines()
+            json.loads(line) for line in s3.objects[(bucket, key)].splitlines()
         )
     return records
 
@@ -535,10 +529,10 @@ class _GitHub:
         self.routes = {path: list(replies) for path, replies in routes.items()}
         self.calls: list[str] = []
 
-    def __enter__(self) -> _GitHub:
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, *_: Any) -> None:
+    def __exit__(self, *_: object) -> None:
         return None
 
     def get(self, url: str, **_: Any) -> _Reply:

@@ -19,9 +19,9 @@ image_tag="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
 tagged_image="${repository_uri}:${image_tag}"
 
 aws ecr get-login-password --region "$region" \
-  | docker login --username AWS --password-stdin "$registry"
-docker build --pull --file build/airflow/Dockerfile --tag "$tagged_image" .
-docker push "$tagged_image"
+  | docker login --username AWS --password-stdin "$registry" >&2
+docker build --platform linux/amd64 --pull --file build/airflow/Dockerfile --tag "$tagged_image" . >&2
+docker push "$tagged_image" >&2
 
 digest="$(aws ecr describe-images \
   --region "$region" \

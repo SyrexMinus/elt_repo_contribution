@@ -329,6 +329,18 @@ def _iter_github_pages(
             headers=headers,
             timeout=request_timeout_seconds,
         )
+        if reply.status_code == 429 and "Retry-After" in reply.headers:
+            time.sleep(float(reply.headers["Retry-After"]))
+            continue
+        if (
+            reply.status_code == 403
+            and reply.headers.get("X-RateLimit-Remaining") == "0"
+            and "X-RateLimit-Reset" in reply.headers
+        ):
+            time.sleep(
+                max(0, float(reply.headers["X-RateLimit-Reset"]) - time.time()) + 1
+            )
+            continue
         if reply.status_code != 200 or not reply.content:
             raise _CorruptedResponse(
                 _QuarantineRecord(
@@ -472,11 +484,13 @@ def _report_job_started(
         MetricData=[
             {
                 "MetricName": "job_start_count",
+                "Dimensions": [{"Name": "stage", "Value": "poller"}],
                 "Value": 1,
                 "Unit": "Count",
             },
             {
                 "MetricName": "inflight_job_count",
+                "Dimensions": [{"Name": "stage", "Value": "poller"}],
                 "Value": 1,
                 "Unit": "Count",
             },
@@ -496,22 +510,28 @@ def _report_job_finished(
         MetricData=[
             {
                 "MetricName": "inflight_job_count",
+                "Dimensions": [{"Name": "stage", "Value": "poller"}],
                 "Value": 0,
                 "Unit": "Count",
             },
             {
                 "MetricName": "corrupted_count",
+                "Dimensions": [{"Name": "stage", "Value": "poller"}],
                 "Value": corrupted_count,
                 "Unit": "Count",
             },
             {
                 "MetricName": "job_duration",
+                "Dimensions": [{"Name": "stage", "Value": "poller"}],
                 "Value": duration,
                 "Unit": "Seconds",
             },
             {
                 "MetricName": "job_finish_status",
-                "Dimensions": [{"Name": "status", "Value": status}],
+                "Dimensions": [
+                    {"Name": "stage", "Value": "poller"},
+                    {"Name": "status", "Value": status},
+                ],
                 "Value": 1,
                 "Unit": "Count",
             },

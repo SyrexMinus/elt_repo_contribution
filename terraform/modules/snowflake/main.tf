@@ -120,3 +120,71 @@ resource "snowflake_warehouse" "this" {
   auto_resume         = true
   initially_suspended = true
 }
+
+resource "snowflake_account_role" "runtime" {
+  name = "${var.prefix}_PIPELINE"
+}
+
+resource "snowflake_grant_account_role" "runtime" {
+  role_name = snowflake_account_role.runtime.name
+  user_name = var.runtime_user
+}
+
+resource "snowflake_grant_privileges_to_account_role" "database" {
+  account_role_name = snowflake_account_role.runtime.name
+  privileges        = ["USAGE"]
+  on_account_object {
+    object_type = "DATABASE"
+    object_name = snowflake_database.this.name
+  }
+}
+
+resource "snowflake_grant_privileges_to_account_role" "warehouse" {
+  account_role_name = snowflake_account_role.runtime.name
+  privileges        = ["USAGE"]
+  on_account_object {
+    object_type = "WAREHOUSE"
+    object_name = snowflake_warehouse.this.name
+  }
+}
+
+resource "snowflake_grant_privileges_to_account_role" "silver_schema" {
+  account_role_name = snowflake_account_role.runtime.name
+  privileges        = ["USAGE", "CREATE TABLE", "CREATE STAGE", "CREATE FILE FORMAT"]
+  on_schema {
+    schema_name = "\"${snowflake_database.this.name}\".\"${snowflake_schema.silver.name}\""
+  }
+}
+
+resource "snowflake_grant_privileges_to_account_role" "silver_tables" {
+  for_each = {
+    pull   = snowflake_table.pull.name
+    file   = snowflake_table.file.name
+    review = snowflake_table.review.name
+  }
+  account_role_name = snowflake_account_role.runtime.name
+  privileges        = ["SELECT", "INSERT", "UPDATE", "DELETE"]
+  on_schema_object {
+    object_type = "TABLE"
+    object_name = "\"${snowflake_database.this.name}\".\"${snowflake_schema.silver.name}\".\"${each.value}\""
+  }
+}
+
+resource "snowflake_grant_privileges_to_account_role" "gold_schema" {
+  account_role_name = snowflake_account_role.runtime.name
+  privileges        = ["USAGE", "CREATE TABLE", "CREATE VIEW"]
+  on_schema {
+    schema_name = "\"${snowflake_database.this.name}\".\"${snowflake_schema.gold.name}\""
+  }
+}
+
+resource "snowflake_network_policy" "runtime" {
+  name            = "${var.prefix}_PIPELINE_EGRESS"
+  allowed_ip_list = ["${var.nat_public_ip}/32"]
+}
+
+resource "snowflake_network_policy_attachment" "runtime" {
+  network_policy_name = snowflake_network_policy.runtime.name
+  set_for_account     = false
+  users               = [var.runtime_user]
+}

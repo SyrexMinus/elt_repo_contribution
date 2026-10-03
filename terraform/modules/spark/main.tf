@@ -3,6 +3,15 @@ resource "aws_emrserverless_application" "silver" {
   release_label = "emr-7.1.0"
   type          = "spark"
 
+  image_configuration {
+    image_uri = var.image
+  }
+
+  network_configuration {
+    subnet_ids         = [var.subnet_id]
+    security_group_ids = [var.security_group_id]
+  }
+
   auto_start_configuration {
     enabled = true
   }
@@ -16,7 +25,32 @@ resource "aws_emrserverless_application" "silver" {
     cpu    = "8 vCPU"
     memory = "32 GB"
   }
+
+  depends_on = [aws_ecr_repository_policy.silver]
 }
+
+
+data "aws_caller_identity" "current" {}
+
+data "aws_region" "current" {}
+
+resource "aws_ecr_repository_policy" "silver" {
+  repository = split("@", split(".amazonaws.com/", var.image)[1])[0]
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "emr-serverless.amazonaws.com" }
+      Action    = ["ecr:BatchGetImage", "ecr:DescribeImages", "ecr:GetDownloadUrlForLayer"]
+      Condition = {
+        ArnLike = {
+          "aws:SourceArn" = "arn:aws:emr-serverless:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:/applications/*"
+        }
+      }
+    }]
+  })
+}
+
 
 resource "aws_s3_object" "silver_job" {
   bucket = var.artifacts_bucket

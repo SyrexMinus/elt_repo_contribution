@@ -11,11 +11,11 @@ output "spark_application_id" {
 }
 
 output "airflow_url" {
-  value = module.airflow.webserver_url
+  value = "http://${aws_eip.nat.public_ip}:8080"
 }
 
 output "airflow_public_ip" {
-  value = module.airflow.public_ip
+  value = aws_eip.nat.public_ip
 }
 
 output "snowflake_database" {

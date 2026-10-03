@@ -1,4 +1,4 @@
-FROM apache/airflow:3.3.1-python3.12
+FROM apache/airflow:slim-3.3.1-python3.12
 
 COPY build/airflow/requirements.txt /requirements.txt
 RUN pip install --no-cache-dir -r /requirements.txt \
@@ -7,3 +7,4 @@ RUN pip install --no-cache-dir -r /requirements.txt \
 COPY --chown=airflow:root stages /opt/airflow/stages
 
 ENV AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/stages/airflow_dags
+ENV PYTHONPATH=/opt/airflow

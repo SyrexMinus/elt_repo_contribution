@@ -90,6 +90,7 @@ def silver(
     event: dict[str, Any],
     spark: SparkSession,
     s3: Any,
+    ssm: Any,
     cloudwatch: Any,
 ) -> dict[str, Any]:
     config = _SilverEvent.model_validate(event)
@@ -153,12 +154,15 @@ def silver(
             ).persist(StorageLevel.MEMORY_AND_DISK)
             cached_frames.append(snapshot_pulls)
             output_counts = _count_tables(tables)
+            snowflake_options = config.snowflake_options.model_dump(exclude_none=True)
+            snowflake_options["sfPassword"] = ssm.get_parameter(
+                Name=config.snowflake_password_ssm_parameter,
+                WithDecryption=True,
+            )["Parameter"]["Value"]
             _merge_tables(
                 tables=tables,
                 snapshot_pulls=snapshot_pulls,
-                snowflake_options=config.snowflake_options.model_dump(
-                    exclude_none=True
-                ),
+                snowflake_options=snowflake_options,
             )
 
         artifact_key = f"pipeline-artifacts/{config.run_id}/silver/output.parquet"
@@ -200,6 +204,7 @@ def main(argv: list[str]) -> dict[str, Any]:
         event=json.loads(argv[0]),
         spark=spark,
         s3=boto3.client("s3"),
+        ssm=boto3.client("ssm"),
         cloudwatch=boto3.client("cloudwatch"),
     )
 
@@ -209,7 +214,6 @@ class _SnowflakeOptions(BaseModel):
 
     sfURL: str
     sfUser: str
-    sfPassword: str
     sfDatabase: str
     sfSchema: str
     sfWarehouse: str
@@ -223,6 +227,7 @@ class _SilverEvent(BaseModel):
     stage1_artifact_uri: str
     artifacts_bucket: str
     cloudwatch_namespace: str
+    snowflake_password_ssm_parameter: str
     snowflake_options: _SnowflakeOptions
 
 
@@ -680,11 +685,13 @@ def _report_job_started(cloudwatch: Any, namespace: str) -> None:
         MetricData=[
             {
                 "MetricName": "job_start_count",
+                "Dimensions": [{"Name": "stage", "Value": "silver"}],
                 "Value": 1,
                 "Unit": "Count",
             },
             {
                 "MetricName": "inflight_job_count",
+                "Dimensions": [{"Name": "stage", "Value": "silver"}],
                 "Value": 1,
                 "Unit": "Count",
             },
@@ -704,22 +711,28 @@ def _report_job_finished(
         MetricData=[
             {
                 "MetricName": "inflight_job_count",
+                "Dimensions": [{"Name": "stage", "Value": "silver"}],
                 "Value": 0,
                 "Unit": "Count",
             },
             {
                 "MetricName": "corrupted_count",
+                "Dimensions": [{"Name": "stage", "Value": "silver"}],
                 "Value": corrupted_count,
                 "Unit": "Count",
             },
             {
                 "MetricName": "job_duration",
+                "Dimensions": [{"Name": "stage", "Value": "silver"}],
                 "Value": duration,
                 "Unit": "Seconds",
             },
             {
                 "MetricName": "job_finish_status",
-                "Dimensions": [{"Name": "status", "Value": status}],
+                "Dimensions": [
+                    {"Name": "stage", "Value": "silver"},
+                    {"Name": "status", "Value": status},
+                ],
                 "Value": 1,
                 "Unit": "Count",
             },

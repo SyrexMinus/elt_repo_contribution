@@ -58,3 +58,43 @@ variable "spark_execution_role_arn" {
 variable "silver_job_s3_uri" {
   type = string
 }
+
+variable "vpc_id" {
+  type = string
+}
+
+variable "subnet_id" {
+  type = string
+}
+
+variable "silver_subnet_cidr" {
+  type = string
+}
+
+variable "github_token_ssm_parameter" {
+  type = string
+}
+
+variable "snowflake_password_ssm_parameter" {
+  type = string
+}
+
+variable "snowflake_account" {
+  type = string
+}
+
+variable "snowflake_runtime_user" {
+  type = string
+}
+
+variable "snowflake_runtime_role" {
+  type = string
+}
+
+variable "snowflake_database" {
+  type = string
+}
+
+variable "snowflake_warehouse" {
+  type = string
+}

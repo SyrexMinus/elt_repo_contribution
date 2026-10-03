@@ -66,3 +66,25 @@ variable "snowflake_role" {
 variable "snowflake_warehouse_size" {
   type = string
 }
+
+variable "silver_image" {
+  type = string
+}
+
+variable "github_token_ssm_parameter" {
+  type = string
+}
+
+variable "snowflake_password_ssm_parameter" {
+  type = string
+}
+
+variable "secrets_kms_key_arn" {
+  type    = string
+  default = null
+}
+
+variable "snowflake_runtime_user" {
+  type    = string
+  default = "ELT_PIPELINE"
+}

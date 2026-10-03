@@ -63,7 +63,7 @@ resource "aws_iam_policy" "emr_serverless_invoke" {
     Statement = [{
       Effect   = "Allow"
       Action   = ["emr-serverless:StartJobRun", "emr-serverless:GetJobRun", "emr-serverless:CancelJobRun", "emr-serverless:StartApplication"]
-      Resource = "*"
+      Resource = [var.spark_application_arn, "${var.spark_application_arn}/jobruns/*"]
     }]
   })
 }
@@ -72,6 +72,75 @@ resource "aws_iam_policy" "emr_serverless_invoke" {
 resource "aws_iam_role_policy_attachment" "airflow_emr" {
   role       = aws_iam_role.airflow.name
   policy_arn = aws_iam_policy.emr_serverless_invoke.arn
+}
+
+
+resource "aws_iam_role_policy" "airflow_pass_spark" {
+  role = aws_iam_role.airflow.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "iam:PassRole"
+      Resource = aws_iam_role.spark_execution.arn
+      Condition = {
+        StringEquals = { "iam:PassedToService" = "emr-serverless.amazonaws.com" }
+      }
+    }]
+  })
+}
+
+
+data "aws_region" "current" {}
+
+data "aws_caller_identity" "current" {}
+
+resource "aws_iam_role_policy" "airflow_secrets" {
+  role = aws_iam_role.airflow.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = "ssm:GetParameter"
+      Resource = [
+        for name in [var.github_token_ssm_parameter, var.snowflake_password_ssm_parameter] :
+        "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter/${trimprefix(name, "/")}"
+      ]
+    }]
+  })
+}
+
+
+resource "aws_iam_role_policy" "spark_secret" {
+  role = aws_iam_role.spark_execution.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "ssm:GetParameter"
+      Resource = "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter/${trimprefix(var.snowflake_password_ssm_parameter, "/")}"
+    }]
+  })
+}
+
+
+resource "aws_iam_role_policy" "secrets_kms" {
+  for_each = var.secrets_kms_key_arn == null ? {} : {
+    airflow = aws_iam_role.airflow.id
+    silver  = aws_iam_role.spark_execution.id
+  }
+  role = each.value
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "kms:Decrypt"
+      Resource = var.secrets_kms_key_arn
+      Condition = {
+        StringEquals = { "kms:ViaService" = "ssm.${data.aws_region.current.name}.amazonaws.com" }
+      }
+    }]
+  })
 }
 
 
