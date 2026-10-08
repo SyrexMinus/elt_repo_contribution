@@ -1,5 +1,6 @@
 locals {
-  prefix = "${var.name_prefix}-${var.environment}"
+  prefix                  = "${var.name_prefix}-${var.environment}"
+  snowflake_account_parts = regex("^([^-]+)-(.*)$", var.snowflake_account)
 }
 
 module "s3" {

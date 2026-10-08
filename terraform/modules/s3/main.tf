@@ -14,6 +14,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "bronze" {
   rule {
     id     = "expire-raw"
     status = "Enabled"
+    filter {}
     expiration {
       days = var.bronze_retention_days
     }

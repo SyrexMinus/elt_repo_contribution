@@ -11,7 +11,8 @@ provider "aws" {
 }
 
 provider "snowflake" {
-  account = var.snowflake_account
-  user    = var.snowflake_user
-  role    = var.snowflake_role
+  organization_name = local.snowflake_account_parts[0]
+  account_name      = local.snowflake_account_parts[1]
+  user              = var.snowflake_user
+  role              = var.snowflake_role
 }

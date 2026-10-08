@@ -95,6 +95,7 @@ def _silver(**context):
                     "--conf spark.driver.cores=2 "
                     "--conf spark.driver.memory=4g "
                     "--conf spark.sql.session.timeZone=UTC "
+                    f"--conf spark.emr-serverless.driverEnv.AWS_DEFAULT_REGION={os.environ['AWS_REGION']} "
                     "--conf spark.emr-serverless.driverEnv.PYSPARK_DRIVER_PYTHON=/opt/silver-venv/bin/python3 "
                     "--conf spark.emr-serverless.driverEnv.PYSPARK_PYTHON=/opt/silver-venv/bin/python3 "
                     "--conf spark.executorEnv.PYSPARK_PYTHON=/opt/silver-venv/bin/python3 "

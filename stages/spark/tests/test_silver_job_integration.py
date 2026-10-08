@@ -54,6 +54,7 @@ class SilverJobIntegrationTest(TestCase):
             .appName("silver-job-live-integration-test")
             .config("spark.ui.enabled", "false")
             .config("spark.sql.session.timeZone", "UTC")
+            .config("spark.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
             .config("spark.hadoop.fs.s3a.endpoint", endpoint)
             .config("spark.hadoop.fs.s3a.path.style.access", "true")
             .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")

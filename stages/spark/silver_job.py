@@ -114,9 +114,7 @@ def silver(
         corrupted_counts = {table: 0 for table in _TABLE_COLUMNS}
 
         if source_row_count:
-            lines = spark.read.text(
-                [_spark_uri(record["s3_uri"]) for record in manifest]
-            )
+            lines = spark.read.text([record["s3_uri"] for record in manifest])
             parsed = _parse_records(lines).persist(StorageLevel.MEMORY_AND_DISK)
             cached_frames.append(parsed)
             source_counts, corrupted_counts = _count_parsed_records(parsed)
@@ -578,10 +576,6 @@ def _s3_location(uri: str) -> tuple[str, str]:
     if parsed.scheme != "s3" or not parsed.netloc or not parsed.path:
         raise ValueError(f"invalid S3 URI: {uri}")
     return parsed.netloc, unquote(parsed.path.lstrip("/"))
-
-
-def _spark_uri(uri: str) -> str:
-    return f"s3a://{uri.removeprefix('s3://')}" if uri.startswith("s3://") else uri
 
 
 def _store_raw_rows(
