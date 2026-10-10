@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import shlex
 import subprocess
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
@@ -14,7 +13,6 @@ from unittest import TestCase
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
-import boto3
 from pyarrow import parquet
 
 from stages.airflow_dags import elt_dag
@@ -68,7 +66,7 @@ class EltDagTest(TestCase):
         self.assertEqual(
             _artifact_records(
                 runtime.s3,
-                f"pipeline-artifacts/{RUN_ID}/stage1/output.parquet",
+                f"pipeline-artifacts/{RUN_ID}/bronze/output.parquet",
             ),
             [],
         )
@@ -207,7 +205,7 @@ class EltDagTest(TestCase):
                 "status": "success",
                 "artifact_uri": (
                     f"s3://{ARTIFACTS_BUCKET}/pipeline-artifacts/"
-                    f"{RUN_ID}/stage1/output.parquet"
+                    f"{RUN_ID}/bronze/output.parquet"
                 ),
                 "bronze_objects": 1,
                 "pull_requests": 2,
@@ -217,7 +215,7 @@ class EltDagTest(TestCase):
         self.assertEqual(
             _artifact_records(
                 runtime.s3,
-                f"pipeline-artifacts/{RUN_ID}/stage1/output.parquet",
+                f"pipeline-artifacts/{RUN_ID}/bronze/output.parquet",
             ),
             [
                 {

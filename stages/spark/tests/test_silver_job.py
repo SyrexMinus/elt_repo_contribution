@@ -200,7 +200,7 @@ class SilverJobTest(TestCase):
             bronze_path.write_text(
                 "".join(json.dumps(record) + "\n" for record in bronze_recs)
             )
-            manifest_key = f"pipeline-artifacts/{RUN_ID}/stage1/output.parquet"
+            manifest_key = f"pipeline-artifacts/{RUN_ID}/bronze/output.parquet"
             s3 = _S3(
                 {
                     (ARTIFACTS_BUCKET, manifest_key): _manifest_bytes(
@@ -289,7 +289,7 @@ class SilverJobTest(TestCase):
             bronze_path.write_text(
                 "".join(json.dumps(record) + "\n" for record in bronze_recs)
             )
-            manifest_key = f"pipeline-artifacts/{RUN_ID}/stage1/output.parquet"
+            manifest_key = f"pipeline-artifacts/{RUN_ID}/bronze/output.parquet"
             s3 = _S3(
                 {
                     (ARTIFACTS_BUCKET, manifest_key): _manifest_bytes(
@@ -349,10 +349,10 @@ class SilverJobTest(TestCase):
             corrupted_count=5,
         )
 
-    def test_silver_writes_empty_artifact_when_stage1_manifest_is_empty(
+    def test_silver_writes_empty_artifact_when_bronze_manifest_is_empty(
         self,
     ) -> None:
-        manifest_key = f"pipeline-artifacts/{RUN_ID}/stage1/output.parquet"
+        manifest_key = f"pipeline-artifacts/{RUN_ID}/bronze/output.parquet"
         s3 = _S3(
             {
                 (ARTIFACTS_BUCKET, manifest_key): _manifest_bytes(

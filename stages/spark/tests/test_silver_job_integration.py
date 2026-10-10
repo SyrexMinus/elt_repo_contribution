@@ -235,9 +235,7 @@ class SilverJobIntegrationTest(TestCase):
                     title="Complete snapshot update",
                     updated_at="2026-09-27T11:00:00Z",
                     files=[("src/kept.py", 0, 7, "removed")],
-                    reviews=[
-                        ("kept-reviewer", "APPROVED", "2026-09-27T11:01:00Z")
-                    ],
+                    reviews=[("kept-reviewer", "APPROVED", "2026-09-27T11:01:00Z")],
                 ),
             )
             silver_job.silver(
@@ -265,9 +263,7 @@ class SilverJobIntegrationTest(TestCase):
                 ),
                 {
                     "file": [("src/kept.py", 0, 7, snapshot_update_run_id)],
-                    "review": [
-                        ("kept-reviewer", "APPROVED", snapshot_update_run_id)
-                    ],
+                    "review": [("kept-reviewer", "APPROVED", snapshot_update_run_id)],
                 },
             )
 
@@ -297,9 +293,7 @@ class SilverJobIntegrationTest(TestCase):
                 ),
                 {
                     "file": [("src/kept.py", 0, 7, snapshot_update_run_id)],
-                    "review": [
-                        ("kept-reviewer", "APPROVED", snapshot_update_run_id)
-                    ],
+                    "review": [("kept-reviewer", "APPROVED", snapshot_update_run_id)],
                 },
             )
             self.assertEqual(
@@ -318,9 +312,7 @@ class SilverJobIntegrationTest(TestCase):
             "stage1_artifact_uri": artifact_uri,
             "artifacts_bucket": ARTIFACTS_BUCKET,
             "cloudwatch_namespace": CLOUDWATCH_NAMESPACE,
-            "snowflake_password_ssm_parameter": (
-                SNOWFLAKE_PASSWORD_SSM_PARAMETER
-            ),
+            "snowflake_password_ssm_parameter": (SNOWFLAKE_PASSWORD_SSM_PARAMETER),
             "snowflake_options": {
                 "sfURL": os.environ["SNOWFLAKE_URL"],
                 "sfUser": os.environ["SNOWFLAKE_USER"],
@@ -330,6 +322,7 @@ class SilverJobIntegrationTest(TestCase):
                 "sfRole": os.environ["SNOWFLAKE_ROLE"],
             },
         }
+
 
 def _run_id(value: datetime) -> str:
     return value.strftime("%Y%m%dT%H%M%S%fZ")
@@ -439,7 +432,7 @@ def _store_increment(
         Body="".join(json.dumps(record) + "\n" for record in bronze_recs).encode(),
         ContentType="application/x-ndjson",
     )
-    manifest_key = f"pipeline-artifacts/{run_id}/stage1/output.parquet"
+    manifest_key = f"pipeline-artifacts/{run_id}/bronze/output.parquet"
     manifest_table = arrow.Table.from_pylist(
         [
             {

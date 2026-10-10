@@ -274,7 +274,7 @@ read -r -p 'Pipeline run_id from Poller XCom: ' RUN_ID
 
 ```bash
 aws s3 ls "s3://$BRONZE_BUCKET/" --recursive --summarize
-aws s3 ls "s3://$ARTIFACTS_BUCKET/pipeline-artifacts/$RUN_ID/stage1/output.parquet"
+aws s3 ls "s3://$ARTIFACTS_BUCKET/pipeline-artifacts/$RUN_ID/bronze/output.parquet"
 aws s3 ls "s3://$ARTIFACTS_BUCKET/pipeline-artifacts/$RUN_ID/silver/output.parquet"
 aws s3 ls "s3://$ARTIFACTS_BUCKET/poller-state/" --recursive
 ```

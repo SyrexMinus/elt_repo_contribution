@@ -54,7 +54,7 @@ class PollerTest(TestCase):
         ]
         artifact_records = _artifact_records(
             s3=s3,
-            key=f"pipeline-artifacts/{run_id}/stage1/output.parquet",
+            key=f"pipeline-artifacts/{run_id}/bronze/output.parquet",
         )
 
         self.assertGreaterEqual(len(pull_records), 45)
@@ -169,7 +169,7 @@ class PollerTest(TestCase):
                 "status": "success",
                 "artifact_uri": (
                     f"s3://{ARTIFACTS_BUCKET}/pipeline-artifacts/"
-                    f"{run_id}/stage1/output.parquet"
+                    f"{run_id}/bronze/output.parquet"
                 ),
                 "corrupted_count": 0,
             },
@@ -210,7 +210,7 @@ class PollerTest(TestCase):
         ]
         artifact_records = _artifact_records(
             s3=s3,
-            key=f"pipeline-artifacts/{run_id}/stage1/output.parquet",
+            key=f"pipeline-artifacts/{run_id}/bronze/output.parquet",
         )
 
         self.assertGreaterEqual(len(pull_records), 230)
@@ -285,7 +285,7 @@ class PollerTest(TestCase):
                 "status": "success",
                 "artifact_uri": (
                     f"s3://{ARTIFACTS_BUCKET}/pipeline-artifacts/"
-                    f"{run_id}/stage1/output.parquet"
+                    f"{run_id}/bronze/output.parquet"
                 ),
                 "corrupted_count": 0,
             },
@@ -326,7 +326,7 @@ class PollerTest(TestCase):
             cloudwatch=cloudwatch,
         )
 
-        artifact_key = f"pipeline-artifacts/{run_id}/stage1/output.parquet"
+        artifact_key = f"pipeline-artifacts/{run_id}/bronze/output.parquet"
         self.assertEqual(
             result,
             {
@@ -513,7 +513,7 @@ class PollerTest(TestCase):
                 self.assertNotIn(
                     (
                         ARTIFACTS_BUCKET,
-                        f"pipeline-artifacts/{run_id}/stage1/output.parquet",
+                        f"pipeline-artifacts/{run_id}/bronze/output.parquet",
                     ),
                     s3.objects,
                 )
@@ -544,7 +544,7 @@ class PollerTest(TestCase):
             "pull_requests": {},
         }
         state_body = _json_bytes(state)
-        artifact_key = f"pipeline-artifacts/{run_id}/stage1/output.parquet"
+        artifact_key = f"pipeline-artifacts/{run_id}/bronze/output.parquet"
         s3 = _S3(
             objects={(ARTIFACTS_BUCKET, STATE_KEY): state_body},
             failed_puts={(ARTIFACTS_BUCKET, artifact_key)},

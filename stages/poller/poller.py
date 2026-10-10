@@ -62,7 +62,7 @@ def poller(
             if pull_cnt:
                 states.append((repo, next_state))
 
-        artifact_key = f"pipeline-artifacts/{config.run_id}/stage1/output.parquet"
+        artifact_key = f"pipeline-artifacts/{config.run_id}/bronze/output.parquet"
         _store_stage_output_manifest(
             s3=s3,
             bucket=config.artifacts_bucket,
