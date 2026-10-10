@@ -43,6 +43,6 @@ from GOLD.fact_time_to_ship as facts
 cross join parameters
 where facts.repo = parameters.repo
   and facts.merged_at >= parameters.merged_from
-  and facts.merged_at < parameters.merged_until
+  and facts.merged_at < dateadd(day, 1, parameters.merged_until::date)
 group by user_login
 order by p75_minutes desc, user_login;

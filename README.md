@@ -1,6 +1,6 @@
 # Batch ELT Pipeline for Repository Contribution Analytics: Design Document
 
-Status: Implemented
+Status: Implemented (see USAGE.md)
 
 Author: Makar Shevchenko
 
@@ -101,11 +101,12 @@ Airflow ───▶  │  Poller      │  batches to ~1000 PR / ~10MB objects,
               └──────┬───────┘
                      │ (3) Airflow triggers
               ┌──────▼───────┐
-              │  dbt (Gold)  │  4 marts, tests, docs
+              │  dbt (Gold)  │  3 facts, tests, docs
               └──────┬───────┘
                      │
               ┌──────▼───────┐
-              │  Dashboards  │  (Snowflake), served with Query Result Cache
+              │  Dashboards  │  4 marts (Streamlit in Snowflake), served 
+              │  (Snowflake) |  with Query Result Cache
               └──────────────┘
 
 Cross-cutting: Terraform provisions all AWS/Snowflake resources.
@@ -119,7 +120,7 @@ Data layers according to medallion framework:
                Immutable landing zone.
 - Silver (Snowflake): Flattened, typed, deduplicated.
                       Tables `pull`, `file`, `review` -- the single source of truth.
-- Gold (Snowflake, dbt): The 4 analytical marts (see Chapter 6).
+- Gold (Snowflake, dbt): Three fact tables supplying the four analytical marts (see Chapter 6).
 
 ### Orchestration & stage handoff
 
@@ -135,6 +136,8 @@ The ingestion modes are:
                             The mode is PR-wise.
 
 ## 5. Data Model
+
+### Silver
 
 The single source of truth is three tables in silver layer: `pull`, `file`, and `review`.
 Their schemas are as follows:
@@ -157,6 +160,34 @@ All three join on `repo + pr_num`.
 Physical sort order chosen to match marts' query access patterns.
 `parse_run_id` column is used for data freshness checking and partial backfilling.
 
+### Gold
+
+The three dbt-computed fact tables contain merged PRs and supply the four rendered marts.
+
+#### Shipping time fact
+
+```text
+fact_time_to_ship (PK: repo + pr_num)
+  repo, pr_num, user_login, merged_at, time_to_ship_minutes,
+  source_updated_at, source_parse_run_id
+```
+
+#### PR directory fact
+
+```text
+fact_pr_directory (PK: repo + pr_num + nest_level + dir)
+  repo, pr_num, nest_level, dir, user_login, merged_at, directory_diff,
+  pr_diff, source_updated_at, source_parse_run_id
+```
+
+#### Review interactions fact
+
+```text
+fact_review_interactions (PK: repo + pr_num + reviewer)
+  repo, pr_num, author, reviewer, review_state, merged_at,
+  source_updated_at, source_parse_run_id
+```
+
 ### Idempotency & deduplication
 
 The pipeline is idempotent by featuring:
@@ -165,45 +196,35 @@ The pipeline is idempotent by featuring:
 - Spark writes use upsert: `MERGE INTO ... ON <PK> WHEN MATCHED AND s.parse_run_id > t.parse_run_id THEN UPDATE ... WHEN NOT MATCHED THEN INSERT ...`, keeping the invariant 1 entity = 1 latest row.
 - Stage re-runs overwrite `s3://.../{run_id}/{stage}/` rather than appending.
 
-## 6. Analytical Marts (Gold)
+## 6. Analytical Marts
 
 Each mart answers a maintainer question.
-Common filters: `repo = :repo`, merged window `merged_at BETWEEN :start AND :end`, merged = `state='closed' AND merged_at IS NOT NULL`.
+Streamlit renders the marts with repository and merge-time window filters based on dbt-computed fact tables.
 
 ### 6.1 Time-to-ship per author
 
 Question of the mart: who experiences slow merges, and how bad is the tail?
-Presentation: bar diagram.
-The query is:
-```sql
-SELECT user_login,
-       COUNT(*) AS cnt,
-       PERCENTILE_DISC(0.5)  WITHIN GROUP (ORDER BY merged_at - created_at) AS p50,
-       PERCENTILE_DISC(0.75) WITHIN GROUP (ORDER BY merged_at - created_at) AS p75,
-       PERCENTILE_DISC(0.90) WITHIN GROUP (ORDER BY merged_at - created_at) AS p90
-FROM pull
-WHERE repo = :repo
-  AND state = 'closed' AND merged_at IS NOT NULL
-  AND merged_at BETWEEN :start AND :end
-GROUP BY user_login
-ORDER BY p75 DESC;
+Presentation: grouped bar chart.
+Source fact: [GOLD.fact_time_to_ship](#shipping-time-fact).
+
+Rendered mart schema, one row per author:
+
+```text
+time_to_ship_per_author (PK: user_login)
+  user_login, pr_count, p50_minutes, p75_minutes, p90_minutes
 ```
 
 ### 6.2 PRs per directory
 
 Question of the mart: which areas of the codebase attract the most change?
-Presentation: heatmap.
-The query is:
-```sql
-SELECT SPLIT(f.filename, '/')[:nest_level] AS dir,
-       COUNT(DISTINCT p.pr_num) AS cnt
-FROM pull p
-JOIN file f ON p.repo = f.repo AND p.pr_num = f.pr_num
-WHERE p.repo = :repo
-  AND p.state = 'closed' AND p.merged_at IS NOT NULL
-  AND p.merged_at BETWEEN :start AND :end
-GROUP BY dir
-ORDER BY cnt DESC;
+Presentation: treemap.
+Source fact: [GOLD.fact_pr_directory](#pr-directory-fact).
+
+Rendered mart schema, one row per directory:
+
+```text
+pr_count_per_directory (PK: dir)
+  dir, parent_dir, pr_count, parent_pr_count, pr_share
 ```
 
 A PR touching N directories counts in each -- intended (it genuinely touched N areas).
@@ -211,38 +232,15 @@ A PR touching N directories counts in each -- intended (it genuinely touched N a
 ### 6.3 Author share of PRs & diff per directory
 
 Question of the mart: who owns the churn in each area? Concentration is a bus-factor signal.
-Presentation: table.
-The query is:
-```sql
-WITH file_diff AS (
-  SELECT
-    SPLIT(f.filename, '/')[:nest_level] AS dir,
-    p.user_login,
-    p.pr_num,
-    f.additions + f.deletions AS diff,
-    SUM(f.additions + f.deletions)
-      OVER (PARTITION BY f.repo, f.pr_num) AS pr_diff
-  FROM pull p
-  JOIN file f ON p.repo = f.repo AND p.pr_num = f.pr_num
-  WHERE p.repo = :repo
-    AND p.state = 'closed' AND p.merged_at IS NOT NULL
-    AND p.merged_at BETWEEN :start AND :end
-),
-user_diff AS (
-  SELECT
-    dir,
-    user_login,
-    COUNT(DISTINCT pr_num) AS user_pr_cnt
-    SUM(COUNT(DISTINCT pr_num)) OVER (PARTITION BY dir) AS total_pr_cnt
-    SUM(diff) AS user_diff,
-    SUM(SUM(diff)) OVER (PARTITION BY dir) AS total_diff
-  FROM file_diff
-  WHERE pr_diff BETWEEN :min_diff AND :max_diff
-  GROUP BY dir, user_login
-)
-SELECT dir, user_login, user_pr_cnt / total_pr_cnt AS pr_cnt_share, user_pr_cnt, total_pr_cnt, user_diff / total_diff AS diff_share, user_diff, total_diff
-FROM user_diff
-ORDER BY pr_cnt_share DESC, total_pr_cnt DESC;
+Presentation: grouped bar chart with a table.
+Source fact: [GOLD.fact_pr_directory](#pr-directory-fact).
+
+Rendered mart schema, one row per directory and author:
+
+```text
+author_pr_and_diff_share_per_directory (PK: dir + user_login)
+  dir, user_login, pr_count_share, user_pr_count, total_pr_count,
+  diff_share, user_diff, total_diff
 ```
 
 PRs are first filtered by total diff size (guards against giant autogen / mass-delete PRs via `:min_diff` / `:max_diff`).
@@ -252,19 +250,14 @@ For better visualization, mart's frontend does not show child rows of 100%-owner
 ### 6.4 Review interactions
 
 Question: who reviews whom? Surfaces review-load concentration / single-reviewer risk.
-Presentation: sankey diagram.
-The query is:
-```sql
-SELECT p.user_login   AS author,
-       r.user_login   AS reviewer,
-       COUNT(*)       AS approvals
-FROM pull p
-JOIN review r ON p.repo = r.repo AND p.pr_num = r.pr_num
-WHERE p.repo = :repo
-  AND p.state = 'closed' AND p.merged_at IS NOT NULL
-  AND p.merged_at BETWEEN :start AND :end
-  AND r.state = 'APPROVED'
-GROUP BY author, reviewer;
+Presentation: Sankey diagram.
+Source fact: [GOLD.fact_review_interactions](#review-interactions-fact).
+
+Rendered mart schema, one row per author and reviewer:
+
+```text
+approved_review_count_by_author_and_reviewer (PK: author + reviewer)
+  author, reviewer, approved_pr_count
 ```
 
 ## 7. Data Quality & Observability

@@ -130,7 +130,7 @@ class GoldBuildIntegrationTest(TestCase):
                         "pr_diff": 1,
                         "source_updated_at": "2026-09-20T12:31:00",
                         "source_parse_run_id": INCREMENTAL_RUN_ID,
-                    }
+                    },
                 ],
                 "FACT_REVIEW_INTERACTIONS": [
                     {
@@ -152,7 +152,7 @@ class GoldBuildIntegrationTest(TestCase):
                         "merged_at": "2026-09-20T12:30:00",
                         "source_updated_at": "2026-09-20T12:31:00",
                         "source_parse_run_id": INCREMENTAL_RUN_ID,
-                    }
+                    },
                 ],
             }
         else:
@@ -251,16 +251,15 @@ class GoldBuildIntegrationTest(TestCase):
             )
 
     def _assert_serving_queries(self) -> None:
-        filters = {
-            ":repo": f"'{REPOSITORY}'",
-            "merged_at = :daterange": (
-                "merged_at between '2026-09-20 00:00:00' " "and '2026-09-21 23:59:59'"
-            ),
-        }
+        for query_path in sorted(SERVING_QUERY_DIR.glob("*.sql")):
+            with self.subTest(query=query_path.name):
+                self.assertGreater(
+                    len(self._serving_rows(filename=query_path.name)),
+                    0,
+                )
         self.assertEqual(
             self._serving_rows(
                 filename="time_to_ship_percentiles_per_author.sql",
-                replacements=filters,
             ),
             [
                 {
@@ -279,21 +278,16 @@ class GoldBuildIntegrationTest(TestCase):
                 },
             ],
         )
-        directory_filters = {**filters, ":nest_level": "1"}
         self.assertEqual(
-            self._serving_rows(
-                filename="pr_count_per_directory.sql",
-                replacements=directory_filters,
-            ),
-            [
-                {"dir": ".", "pr_count": 2},
-                {"dir": "src", "pr_count": 1},
-            ],
+            {
+                row["dir"]: row["pr_count"]
+                for row in self._serving_rows(filename="pr_count_per_directory.sql")
+            },
+            {"/": 2, ".": 2, "src": 1, "src/core": 1},
         )
         self.assertEqual(
             self._serving_rows(
                 filename="approved_review_count_by_author_and_reviewer.sql",
-                replacements=filters,
             ),
             [
                 {
@@ -312,10 +306,6 @@ class GoldBuildIntegrationTest(TestCase):
             (row["dir"], row["user_login"]): row
             for row in self._serving_rows(
                 filename="author_pr_and_diff_share_per_directory.sql",
-                replacements={
-                    **directory_filters,
-                    ":pr_diff_range": "'0-99'",
-                },
             )
         }
         self.assertEqual(
@@ -332,6 +322,18 @@ class GoldBuildIntegrationTest(TestCase):
                 for key, row in author_share.items()
             },
             {
+                ("/", "SyrexMinus"): {
+                    "user_pr_count": 1,
+                    "total_pr_count": 2,
+                    "user_diff": 29,
+                    "total_diff": 31,
+                },
+                ("/", "dependabot[bot]"): {
+                    "user_pr_count": 1,
+                    "total_pr_count": 2,
+                    "user_diff": 2,
+                    "total_diff": 31,
+                },
                 (".", "SyrexMinus"): {
                     "user_pr_count": 1,
                     "total_pr_count": 2,
@@ -368,15 +370,9 @@ class GoldBuildIntegrationTest(TestCase):
             places=6,
         )
 
-    def _serving_rows(
-        self,
-        filename: str,
-        replacements: dict[str, str],
-    ) -> list[dict[str, Any]]:
+    def _serving_rows(self, filename: str) -> list[dict[str, Any]]:
         sql = Path(SERVING_QUERY_DIR, filename).read_text()
         sql = sql.replace("GOLD.", f"{self.database}.{self.gold_schema}.")
-        for keyword, value in replacements.items():
-            sql = sql.replace(keyword, value)
         return _query_rows(connection=self.snowflake, sql=sql)
 
     def _run_dbt(
@@ -615,9 +611,7 @@ def _insert_rows(
 
 
 def _rows(connection, relation: str) -> list[dict[str, Any]]:
-    return _sorted(
-        _query_rows(connection=connection, sql=f"SELECT * FROM {relation}")
-    )
+    return _sorted(_query_rows(connection=connection, sql=f"SELECT * FROM {relation}"))
 
 
 def _query_rows(connection, sql: str) -> list[dict[str, Any]]:

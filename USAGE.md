@@ -308,10 +308,9 @@ fi
 "$PROJECT_ROOT/serving/.venv/bin/python" "$PROJECT_ROOT/serving/deploy.py"
 ```
 
-In Snowsight, open Projects → Streamlit → REPO_CONTRIBUTION in SNOWFLAKE_DATABASE.PUBLIC.
-Reload an already open app tab and select Run.
-Check that all four charts display data and select a directory for the author-share chart.
-Repeat this step after editing SQL parameters or chart settings.
+In Snowsight, open Projects → Streamlit → REPO_CONTRIBUTION.
+Select the repository and set merged_from and merged_until for all charts, then press refresh button.
+Inspect the charts.
 
 ## 12. Run an increment
 

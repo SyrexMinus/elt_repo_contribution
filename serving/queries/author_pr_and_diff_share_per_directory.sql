@@ -1,7 +1,12 @@
 /* chart
 {
   "title": "Author share of PRs and diff",
-  "filter": {"field": "dir", "label": "Directory"},
+  "filter": {
+    "field": "dir",
+    "label": "Directory",
+    "default": "/",
+    "labels": {"/": "All directories", ".": "Root files (.)"}
+  },
   "spec": {
     "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
     "mark": "bar",
@@ -34,31 +39,46 @@ with parameters as (
         'salute-developers/smart_app_framework' as repo,
         '2022-01-01'::timestamp_ntz as merged_from,
         '2026-10-09'::timestamp_ntz as merged_until,
-        1 as nest_level,
-        array_construct('0-99', '100-999', '1000-9999', '10000+') as pr_diff_ranges
+        0 as min_diff,
+        null::number as max_diff
+),
+scoped_directories as (
+    select
+        dir,
+        user_login,
+        pr_num,
+        nest_level,
+        directory_diff
+    from GOLD.fact_pr_directory as facts
+    cross join parameters
+    where facts.repo = parameters.repo
+      and facts.merged_at >= parameters.merged_from
+      and facts.merged_at < dateadd(day, 1, parameters.merged_until::date)
+      and facts.nest_level = iff(
+          facts.dir = '.', 1, array_size(split(facts.dir, '/'))
+      )
+      and facts.pr_diff >= parameters.min_diff
+      and (parameters.max_diff is null or facts.pr_diff <= parameters.max_diff)
 ),
 author_totals as (
     select
         dir,
         user_login,
-        count(*) as user_pr_count,
+        count(distinct pr_num) as user_pr_count,
         sum(directory_diff) as user_diff
-    from GOLD.fact_pr_directory as facts
-    cross join parameters
-    where facts.repo = parameters.repo
-      and facts.merged_at >= parameters.merged_from
-      and facts.merged_at < parameters.merged_until
-      and facts.nest_level = parameters.nest_level
-      and array_contains(
-          case
-              when pr_diff < 100 then '0-99'
-              when pr_diff < 1000 then '100-999'
-              when pr_diff < 10000 then '1000-9999'
-              else '10000+'
-          end::variant,
-          parameters.pr_diff_ranges
-      )
+    from scoped_directories
     group by dir, user_login
+
+    union all
+
+    select
+        '/' as dir,
+        user_login,
+        count(distinct pr_num) as user_pr_count,
+        sum(directory_diff) as user_diff
+    from scoped_directories
+    where nest_level = 1
+    group by user_login
 ),
 directory_totals as (
     select
@@ -76,5 +96,12 @@ select
     user_diff / nullif(total_diff, 0) as diff_share,
     user_diff,
     total_diff
-from directory_totals
+from directory_totals as directory
+where not exists (
+    select 1
+    from directory_totals as ancestor
+    where ancestor.dir <> '/'
+      and ancestor.user_pr_count = ancestor.total_pr_count
+      and startswith(directory.dir, ancestor.dir || '/')
+)
 order by pr_count_share desc, total_pr_count desc, dir, user_login;
