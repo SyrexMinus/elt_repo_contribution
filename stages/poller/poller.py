@@ -228,10 +228,14 @@ def _poll_and_store_repo_events(
                 break
 
             cached = next_state.pull_requests.get(str(pull["number"]))
+            pull_state = _PullRequestState(
+                updated_at=pull["updated_at"],
+                merged=pull.get("merged_at") is not None,
+            )
+            if event.mode == "incremental" and cached == pull_state:
+                continue
             produced_new_snapshot = (
-                event.mode == "backfill"
-                or not cached
-                or (not cached.merged and cached.updated_at != pull["updated_at"])
+                event.mode == "backfill" or not cached or not cached.merged
             )
             records: list[_BronzeRecord] = [
                 _BronzeRecord(
@@ -301,10 +305,7 @@ def _poll_and_store_repo_events(
             batch_size += size
             batch_pulls += 1
             pull_count += 1
-            next_state.pull_requests[str(pull["number"])] = _PullRequestState(
-                updated_at=pull["updated_at"],
-                merged=pull.get("merged_at") is not None,
-            )
+            next_state.pull_requests[str(pull["number"])] = pull_state
             if (
                 next_state.last_successful_watermark is None
                 or pull["updated_at"] > next_state.last_successful_watermark

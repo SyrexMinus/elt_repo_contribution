@@ -29,8 +29,10 @@ RUN_ID = "20260930T080706123456Z"
 class EltDagTest(TestCase):
     def test_elt_repo_contribution_continues_empty_increment(self) -> None:
         state = {
-            "last_successful_watermark": "2099-01-01T00:00:00Z",
-            "pull_requests": {},
+            "last_successful_watermark": "2026-09-29T00:00:00Z",
+            "pull_requests": {
+                "1": {"updated_at": "2026-09-29T00:00:00Z", "merged": False},
+            },
         }
         github = _GitHub(
             {

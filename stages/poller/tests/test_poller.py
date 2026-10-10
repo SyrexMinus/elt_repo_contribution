@@ -308,12 +308,23 @@ class PollerTest(TestCase):
             "last_successful_watermark": watermark,
             "pull_requests": {
                 "301": {"updated_at": watermark, "merged": True},
+                "302": {"updated_at": watermark, "merged": False},
             },
         }
         state_body = _json_bytes(state)
         s3 = _S3({(ARTIFACTS_BUCKET, STATE_KEY): state_body})
         cloudwatch = _CloudWatch()
-        github = _GitHub({(_path("pulls"), 1): _Reply([])})
+        github = _GitHub(
+            {
+                (_path("pulls"), 1): _Reply(
+                    [
+                        _pull(301, watermark, "closed", watermark),
+                        _pull(302, watermark),
+                        _pull(300, "2026-09-09T00:00:00Z"),
+                    ]
+                )
+            }
+        )
 
         result = poller(
             event=_event(
@@ -355,6 +366,41 @@ class PollerTest(TestCase):
             cloudwatch=cloudwatch,
             status="empty",
             corrupted_count=0,
+        )
+
+    def test_poller_writes_unknown_pull_request_at_watermark(self) -> None:
+        run_id = "watermark-run"
+        watermark = "2026-09-10T00:00:00Z"
+        s3 = _S3(
+            {
+                (ARTIFACTS_BUCKET, STATE_KEY): _json_bytes(
+                    {
+                        "last_successful_watermark": watermark,
+                        "pull_requests": {
+                            "301": {"updated_at": watermark, "merged": True},
+                        },
+                    }
+                )
+            }
+        )
+        github = _GitHub(
+            {
+                (_path("pulls"), 1): _Reply(
+                    [
+                        _pull(301, watermark, "closed", watermark),
+                        _pull(302, watermark),
+                    ]
+                ),
+                (_path("pulls/302/files"), 1): _Reply([]),
+                (_path("pulls/302/reviews"), 1): _Reply([]),
+            }
+        )
+
+        poller(_event(run_id, "incremental", 1000), s3, github, _CloudWatch())
+
+        self.assertEqual(
+            [record["pr_num"] for record in _bronze_records(s3, run_id)],
+            [302],
         )
 
     def test_poller_retries_rate_limited_request(self) -> None:
