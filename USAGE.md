@@ -32,7 +32,7 @@ bash
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl git jq openssh-client openssl python3 unzip
+sudo apt-get install -y ca-certificates curl git jq openssh-client openssl python3 python3-venv unzip
 ```
 
 ```bash
@@ -286,25 +286,32 @@ python3 "$PROJECT_ROOT/tools/render_usage_template.py" snowflake-check.sql > /tm
 cat /tmp/elt-check.sql
 ```
 
-Run /tmp/elt-check.sql in a Snowsight worksheet as ACCOUNTADMIN.
+Run /tmp/elt-check.sql in a Snowsight Workspaces SQL file as ACCOUNTADMIN.
 Check PULL ≥ 230, FILE ≥ 230, and nonzero row counts for REVIEW and all three Gold tables.
-Check PR 1: author intsyn, title Feature/new metrics, merged_at 2022-05-16 06:44:31.
+Check that PR 210 is returned for salute-developers/smart_app_framework.
 
-## 11. Run the four dashboard queries
+## 11. Deploy the four charts
 
-In Snowsight, create a dashboard and four worksheets.
-Select ACCOUNTADMIN, the database from snowflake_database, and the warehouse from snowflake_warehouse in terraform output.
-Copy one SQL file from serving/queries into each worksheet.
-Create the custom filters with the keywords below, without a leading colon, and use the system daterange filter.
+Edit the parameters CTE and chart JSON in serving/queries/*.sql if needed.
 
-| Keyword       | Type                   | Value                                        |
-|---------------|------------------------|----------------------------------------------|
-| repo          | Text, single choice    | salute-developers/smart_app_framework        |
-| daterange     | System date range, UTC | 2022-01-01 through today                     |
-| nest_level    | Number, single choice  | 1                                            |
-| pr_diff_range | Text, multiple choice  | 0-99, 100-999, 1000-9999, 10000+; enable All |
+```bash
+cd "$PROJECT_ROOT/terraform"
+export SNOWFLAKE_USER="$SNOWFLAKE_TERRAFORM_USER"
+export SNOWFLAKE_ROLE=ACCOUNTADMIN
+export SNOWFLAKE_DATABASE="$(terraform output -raw snowflake_database)"
+export SNOWFLAKE_WAREHOUSE="$(terraform output -raw snowflake_warehouse)"
+export SNOWFLAKE_PRIVATE_KEY_FILE="$HOME/.snowflake/elt_terraform.p8"
+if [ ! -x "$PROJECT_ROOT/serving/.venv/bin/python" ]; then
+  python3 -m venv "$PROJECT_ROOT/serving/.venv"
+fi
+"$PROJECT_ROOT/serving/.venv/bin/python" -m pip install -r "$PROJECT_ROOT/serving/requirements.txt"
+"$PROJECT_ROOT/serving/.venv/bin/python" "$PROJECT_ROOT/serving/deploy.py"
+```
 
-Run all four worksheets, check that each returns rows, and add the results as dashboard tiles.
+In Snowsight, open Projects → Streamlit → REPO_CONTRIBUTION in SNOWFLAKE_DATABASE.PUBLIC.
+Reload an already open app tab and select Run.
+Check that all four charts display data and select a directory for the author-share chart.
+Repeat this step after editing SQL parameters or chart settings.
 
 ## 12. Run an increment
 

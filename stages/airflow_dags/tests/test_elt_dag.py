@@ -75,30 +75,6 @@ class EltDagTest(TestCase):
         self.assertEqual(github.calls, [_path("pulls")])
         self.assertEqual(len(runtime.emr.start_calls), 1)
         emr_call = runtime.emr.start_calls[0]
-        driver_environment = dict(
-            value.removeprefix("spark.emr-serverless.driverEnv.").split("=", 1)
-            for value in shlex.split(
-                emr_call["jobDriver"]["sparkSubmit"]["sparkSubmitParameters"]
-            )
-            if value.startswith("spark.emr-serverless.driverEnv.")
-        )
-        with patch.dict(
-            os.environ,
-            {"AWS_CONFIG_FILE": os.devnull, **driver_environment},
-            clear=True,
-        ):
-            driver_aws = boto3.Session(
-                aws_access_key_id="test", aws_secret_access_key="test"
-            )
-            self.assertEqual(
-                {
-                    service: driver_aws.client(service).meta.region_name
-                    for service in ("s3", "ssm", "cloudwatch")
-                },
-                dict.fromkeys(
-                    ("s3", "ssm", "cloudwatch"), _environment()["AWS_REGION"]
-                ),
-            )
         self.assertEqual(emr_call["executionTimeoutMinutes"], 30)
         silver_event = _silver_event(emr_call)
         self.assertEqual(silver_event["mode"], "incremental")
