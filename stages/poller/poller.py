@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import time
 from collections.abc import Iterator, Mapping
 from typing import Any, Literal, Protocol
@@ -27,50 +28,60 @@ def poller(
     )
 
     try:
-        artifacts: list[_ArtifactRecord] = []
-        states: list[tuple[str, _PollerState]] = []
-        pull_count = 0
-
-        for repo in config.repositories:
-            state = _load_poller_state(
-                s3=s3,
-                bucket=config.artifacts_bucket,
-                repository=repo,
-            )
-            try:
-                repo_artifacts, pull_cnt, next_state = _poll_and_store_repo_events(
-                    event=config,
-                    repository=repo,
-                    state=state,
-                    s3=s3,
-                    github=github,
-                )
-            except _CorruptedResponse as error:
-                corrupted_count = 1
-                _store_corrupted_artifact(
-                    s3=s3,
-                    bucket=config.artifacts_bucket,
-                    key=(f"corrupted-artifacts/{config.run_id}/stage1/output.parquet"),
-                    records=[error.record],
-                )
-                raise RuntimeError(
-                    f"GitHub returned a corrupted response for {error.record.url}"
-                ) from error
-
-            artifacts.extend(repo_artifacts)
-            pull_count += pull_cnt
-            if pull_cnt:
-                states.append((repo, next_state))
-
         artifact_key = f"pipeline-artifacts/{config.run_id}/bronze/output.parquet"
-        _store_stage_output_manifest(
+        manifest = _load_stage_output_manifest(
             s3=s3,
             bucket=config.artifacts_bucket,
             key=artifact_key,
-            records=artifacts,
         )
+        if manifest is None:
+            artifacts: list[_ArtifactRecord] = []
+            states: dict[str, _PollerState] = {}
 
-        for repo, state in states:
+            for repo in config.repositories:
+                state = _load_poller_state(
+                    s3=s3,
+                    bucket=config.artifacts_bucket,
+                    repository=repo,
+                )
+                try:
+                    repo_artifacts, pull_cnt, next_state = _poll_and_store_repo_events(
+                        event=config,
+                        repository=repo,
+                        state=state,
+                        s3=s3,
+                        github=github,
+                    )
+                except _CorruptedResponse as error:
+                    corrupted_count = 1
+                    _store_corrupted_artifact(
+                        s3=s3,
+                        bucket=config.artifacts_bucket,
+                        key=(
+                            f"corrupted-artifacts/{config.run_id}/stage1/output.parquet"
+                        ),
+                        records=[error.record],
+                    )
+                    raise RuntimeError(
+                        f"GitHub returned a corrupted response for {error.record.url}"
+                    ) from error
+
+                artifacts.extend(repo_artifacts)
+                if pull_cnt:
+                    next_state.last_successful_run_id = config.run_id
+                    states[repo] = next_state
+
+            _store_stage_output_manifest(
+                s3=s3,
+                bucket=config.artifacts_bucket,
+                key=artifact_key,
+                records=artifacts,
+                states=states,
+            )
+        else:
+            artifacts, states = manifest
+
+        for repo, state in states.items():
             _store_poller_state(
                 s3=s3,
                 bucket=config.artifacts_bucket,
@@ -78,6 +89,7 @@ def poller(
                 state=state,
             )
 
+        pull_count = sum(record.pull_request_count for record in artifacts)
         status = "success" if pull_count else "empty"
         return _PollerResult(
             run_id=config.run_id,
@@ -118,6 +130,7 @@ class _PullRequestState(BaseModel):
 
 class _PollerState(BaseModel):
     last_successful_watermark: str | None = None
+    last_successful_run_id: str = ""
     pull_requests: dict[str, _PullRequestState] = Field(default_factory=dict)
 
 
@@ -159,6 +172,25 @@ class _CorruptedResponse(RuntimeError):
     def __init__(self, record: _QuarantineRecord) -> None:
         super().__init__(record.url)
         self.record = record
+
+
+def _load_stage_output_manifest(
+    s3: _S3Client,
+    bucket: str,
+    key: str,
+) -> tuple[list[_ArtifactRecord], dict[str, _PollerState]] | None:
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=key)
+    except KeyError:
+        return None
+    except s3.exceptions.NoSuchKey:
+        return None
+    table = parquet.read_table(io.BytesIO(obj["Body"].read()))
+    states = json.loads((table.schema.metadata or {}).get(b"poller_states", b"{}"))
+    return (
+        [_ArtifactRecord.model_validate(row) for row in table.to_pylist()],
+        {repo: _PollerState.model_validate(state) for repo, state in states.items()},
+    )
 
 
 def _poll_and_store_repo_events(
@@ -411,6 +443,9 @@ def _store_poller_state(
     repository: str,
     state: _PollerState,
 ) -> None:
+    current = _load_poller_state(s3=s3, bucket=bucket, repository=repository)
+    if current.last_successful_run_id >= state.last_successful_run_id:
+        return
     s3.put_object(
         Bucket=bucket,
         Key=f"poller-state/{repository}.json",
@@ -424,6 +459,7 @@ def _store_stage_output_manifest(
     bucket: str,
     key: str,
     records: list[_ArtifactRecord],
+    states: dict[str, _PollerState],
 ) -> None:
     schema = arrow.schema(
         [
@@ -432,7 +468,13 @@ def _store_stage_output_manifest(
             ("s3_uri", arrow.string()),
             ("pull_request_count", arrow.int64()),
             ("record_count", arrow.int64()),
-        ]
+        ],
+        metadata={
+            b"poller_states": json.dumps(
+                {repo: state.model_dump() for repo, state in states.items()},
+                separators=(",", ":"),
+            ).encode()
+        },
     )
     _store_parquet(
         s3=s3,

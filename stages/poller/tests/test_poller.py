@@ -592,6 +592,37 @@ class PollerTest(TestCase):
             corrupted_count=0,
         )
 
+    def test_poller_preserves_bronze_and_manifest_when_checkpoint_upload_fails(
+        self,
+    ) -> None:
+        event = _event("20261011T100000000000Z", "incremental", 1000)
+        event["repositories"] = [REPOSITORY, "apache/spark"]
+        routes = {}
+        for repo in event["repositories"]:
+            pull_path = f"/repos/{repo}/pulls"
+            routes[(pull_path, 1)] = _Reply([_pull(401, "2026-10-11T09:00:00Z")])
+            routes[(f"{pull_path}/401/files", 1)] = _Reply(
+                [{"filename": "src/app.py", "additions": 10, "deletions": 2}]
+            )
+            routes[(f"{pull_path}/401/reviews", 1)] = _Reply(
+                [{"user": {"login": "reviewer"}, "state": "APPROVED"}]
+            )
+        s3 = _S3(failed_puts={(ARTIFACTS_BUCKET, "poller-state/apache/spark.json")})
+        with self.assertRaises(_UploadFailed):
+            poller(event, s3, _GitHub(routes), _CloudWatch())
+
+        published_bronze_and_manifest = {
+            key: body
+            for key, body in s3.objects.items()
+            if not key[1].startswith("poller-state/")
+        }
+        s3.failed_puts.clear()
+        poller(event, s3, _GitHub(routes), _CloudWatch())
+        self.assertEqual(
+            {key: s3.objects[key] for key in published_bronze_and_manifest},
+            published_bronze_and_manifest,
+        )
+
 
 def _event(
     run_id: str,
