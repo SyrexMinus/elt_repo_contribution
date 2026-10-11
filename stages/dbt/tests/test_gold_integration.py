@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import subprocess
@@ -72,6 +73,37 @@ class GoldBuildIntegrationTest(TestCase):
 
         self._run_dbt(command="build")
         self._assert_gold(incremental=True)
+
+    def test_freshness_query_marks_stale_and_missing_repositories(self) -> None:
+        dag_path = PROJECT_DIR.parent / "airflow_dags" / "freshness_dag.py"
+        freshness_sql = next(
+            node.args[0].value
+            for node in ast.walk(ast.parse(dag_path.read_text()))
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "attr", None) == "execute"
+        )
+        freshness_pull_table = f"{self.database}.{self.silver_schema}.FRESHNESS_PULL"
+        execute(
+            connection=self.snowflake,
+            sql=f"""
+                CREATE TEMPORARY TABLE {freshness_pull_table} AS
+                SELECT column1::varchar AS repo,
+                       DATEADD(day, column2, SYSDATE()) AS updated_at
+                FROM VALUES ('active/repo', -6), ('active/repo', -9), ('idle/repo', -9)
+            """,
+        )
+        with self.snowflake.cursor() as cursor:
+            freshness_rows = cursor.execute(
+                freshness_sql,
+                (
+                    json.dumps(["active/repo", "idle/repo", "empty/repo"]),
+                    freshness_pull_table,
+                ),
+            ).fetchall()
+        self.assertEqual(
+            dict(freshness_rows),
+            {"active/repo": False, "idle/repo": True, "empty/repo": True},
+        )
 
     def _assert_gold(self, incremental: bool) -> None:
         gold = self._gold_relations()

@@ -13,3 +13,7 @@ variable "monthly_budget_usd" {
 variable "metric_namespace" {
   type = string
 }
+
+variable "repositories" {
+  type = list(string)
+}

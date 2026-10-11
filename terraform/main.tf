@@ -72,4 +72,5 @@ module "cloudwatch" {
   alert_email        = var.alert_email
   monthly_budget_usd = var.monthly_budget_usd
   metric_namespace   = "EltRepoContribution"
+  repositories       = var.repositories
 }

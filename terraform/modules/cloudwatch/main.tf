@@ -77,6 +77,22 @@ resource "aws_cloudwatch_metric_alarm" "job_failures" {
 }
 
 
+resource "aws_cloudwatch_metric_alarm" "freshness" {
+  for_each            = toset(var.repositories)
+  alarm_name          = "${var.prefix}-silver-freshness-${each.value}"
+  namespace           = var.metric_namespace
+  metric_name         = "data_freshness_stale"
+  statistic           = "Maximum"
+  period              = 90000
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  treat_missing_data  = "breaching"
+  dimensions          = { stage = "silver", repo = each.value }
+}
+
+
 resource "aws_budgets_budget" "monthly" {
   name         = "${var.prefix}-monthly"
   budget_type  = "COST"
