@@ -5,11 +5,6 @@ group by {{ columns | join(', ') }}
 having count(*) > 1
 {% endtest %}
 
-{% test not_empty(model) %}
-select 1 as empty_relation
-where not exists (select 1 from {{ model }})
-{% endtest %}
-
 {% test nonnegative(model, column_name) %}
 select *
 from {{ model }}

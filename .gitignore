@@ -13,6 +13,10 @@ build/
 /build/*
 !/build/airflow/
 !/build/airflow/**
+!/build/spark/
+!/build/spark/**
+terraform/.terraform/
+terraform/snowflake-import.tf
 develop-eggs/
 dist/
 downloads/
@@ -54,6 +58,9 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+
+# dbt
+.user.yml
 
 # Translations
 *.mo

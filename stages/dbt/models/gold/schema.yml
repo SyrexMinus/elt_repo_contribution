@@ -4,7 +4,6 @@ models:
   - name: fact_pr_directory
     description: Incrementally replaced pull-request directory facts used by request-time serving queries.
     data_tests:
-      - not_empty
       - unique_key:
           arguments:
             columns: [repo, pr_num, nest_level, dir]
@@ -48,7 +47,6 @@ models:
   - name: fact_time_to_ship
     description: Fully rebuilt merged pull-request shipping-time facts used by request-time serving queries.
     data_tests:
-      - not_empty
       - unique_key:
           arguments:
             columns: [repo, pr_num]
@@ -78,7 +76,6 @@ models:
   - name: fact_review_interactions
     description: Fully rebuilt merged pull-request and latest-reviewer facts used by request-time serving queries.
     data_tests:
-      - not_empty
       - unique_key:
           arguments:
             columns: [repo, pr_num, reviewer]

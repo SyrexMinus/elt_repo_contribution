@@ -81,36 +81,40 @@ Architecture diagram is as follows:
               ┌──────────────┐
               │  GitHub API  │  (/pulls, /files, /reviews)
               └──────┬───────┘
-                     │ (1) hourly, incremental (sort=updated)
+                     │ (1) incremental (sort=updated) / explicit backfill
               ┌──────▼───────┐
 Airflow ───▶  │  Poller      │  batches to ~1000 PR / ~10MB objects,
-(cron 1h)     │  (Python)    │  preserving raw JSON down to 1 response
+(cron)        │  (Python)    │  entity JSONL with raw payloads
               └──────┬───────┘
                      │ writes
               ┌──────▼───────┐
-              │  S3 (Bronze) │  raw responses + pipeline artifacts by run_id
+              │  S3 (Bronze) │  JSONL batches by repo/run_id
               └──────┬───────┘
-                     │ (2) Airflow triggers
+                     │ (2) reads Bronze via manifest; Airflow triggers every run
               ┌──────▼───────┐
-              │  Spark       │  flatten JSON → rows, select fields,
+              │  Spark       │  EMR Serverless, including empty increments;
               │  (Silver)    │  enforce schema, MERGE INTO (upsert)
               └──────┬───────┘
                      │ writes
               ┌──────▼───────┐
-              │  Snowflake   │  pull / file / review tables (1 entity = 1 row)
+              │  Snowflake   │  Silver: pull / file / review (1 entity = 1 row)
               └──────┬───────┘
-                     │ (3) Airflow triggers
+                     │ (3) dbt reads Silver; Airflow triggers
               ┌──────▼───────┐
-              │  dbt (Gold)  │  3 facts, tests, docs
+              │  dbt (Gold)  │  builds 3 Gold facts in Snowflake + data tests
               └──────┬───────┘
                      │
               ┌──────▼───────┐
-              │  Dashboards  │  4 marts (Streamlit in Snowflake), served 
-              │  (Snowflake) |  with Query Result Cache
+              │  Dashboards  │  reads Gold → 4 marts (Streamlit in Snowflake),
+              │  (Snowflake) │  served with Query Result Cache
               └──────────────┘
 
-Cross-cutting: Terraform provisions all AWS/Snowflake resources.
-               CloudWatch collects per-stage metrics + alerts.
+Cross-cutting: Airflow cadence: 6h demo / 1h target.
+               S3 artifacts: Bronze manifests + Silver row-count summaries by run_id.
+               XCom passes artifact S3 paths and run metadata.
+               Terraform provisions AWS/Snowflake infrastructure.
+               CloudWatch: per-stage metrics + failure/duration/corruption alerts.
+               Freshness DAG: daily Silver check at 00:00 UTC + freshness alerts.
 ```
 
 ### Medallion layers
@@ -125,7 +129,8 @@ Data layers according to medallion framework:
 ### Orchestration & stage handoff
 
 Airflow DAG runs hourly.
-Artifacts are passed between stages via XCom in form of S3 paths; the data itself lives in S3, partitioned by `run_id` (`pipeline-artifacts/{run_id}/{stage}/output.parquet`).
+XCom passes S3 paths to Bronze manifests and Silver row-count summaries (`pipeline-artifacts/{run_id}/{stage}/output.parquet`).
+Bronze records live in S3 JSONL batches; Silver and Gold tables live in Snowflake, and dbt reads Silver directly.
 
 ### Ingestion modes
 
@@ -158,7 +163,7 @@ review (PK: repo + pr_num + user_login)
 
 All three join on `repo + pr_num`.
 Physical sort order chosen to match marts' query access patterns.
-`parse_run_id` column is used for data freshness checking and partial backfilling.
+`parse_run_id` column is used for ingestion run tracking and partial backfilling.
 
 ### Gold
 
@@ -191,10 +196,10 @@ fact_review_interactions (PK: repo + pr_num + reviewer)
 ### Idempotency & deduplication
 
 The pipeline is idempotent by featuring:
-- Polling restart reuses `last_successful_watermark` in `updated_at < last_successful_watermark` filtering ensuring inclusion of the same PRs.
-  The difference between re-runs result is fetching PR's most recent state, including `updated_at`.
+- Polling restart reuses the published Bronze manifest and completes its repository checkpoints without re-fetching GitHub or rewriting Bronze.
+  Replaying an older run preserves checkpoints of a newer run.
 - Spark writes use upsert: `MERGE INTO ... ON <PK> WHEN MATCHED AND s.parse_run_id > t.parse_run_id THEN UPDATE ... WHEN NOT MATCHED THEN INSERT ...`, keeping the invariant 1 entity = 1 latest row.
-- Stage re-runs overwrite `s3://.../{run_id}/{stage}/` rather than appending.
+- Silver re-runs overwrite `s3://.../{run_id}/silver/` rather than appending.
 
 ## 6. Analytical Marts
 
@@ -271,22 +276,20 @@ Corrupted records do not propagate downstream.
 |--------|-----------------------------------------------------------------------|--------------------------------------|
 | Poller | Requests with `status != 200` / empty bodies                          | Offending URL query params, `s3://.../corrupted-artifacts/{run_id}/stage1/output.parquet` |
 | Spark  | Rows missing required fields* / type violations / out-of-range values | Input row copy, S3, 1 file per table |
-| dbt    | Output row count below expected floor (empty-increment guard)         | dbt test failure                     |
 
 *Schema-drift check
 
 ### Freshness
 
-Freshness checks per layer:
-- Poller: timestamp of the latest `pipeline-artifacts/{run_id}/stage1/output.parquet`.
-- Spark/Silver: `MAX(pull.updated_at)` from the source data.
-- Gold: materialized marts' `updated_at` in Snowflake.
+The independent [`elt_repo_contribution_freshness`](stages/airflow_dags/freshness_dag.py) DAG checks Silver daily at 00:00 UTC.
+For each configured repository, it compares `MAX(pull.updated_at)` with the current UTC time and alerts when the source timestamp is older than seven days or the repository has no rows.
 
 ### CloudWatch metrics & alerts
 
 Metrics are: `job_start_count`, `inflight_job_count`, `job_duration`, `job_finish_status` (success / empty / fail).
+Freshness publishes `data_freshness_stale` (`0` / `1`) with `stage = silver` and `repo` dimensions.
 
-Alerts are: error-rate share, stage duration exceeding threshold, `corrupted_count > 0`, data-freshness beyond SLA, empty-increment where a non-empty one is expected.
+Alerts are: failed stage runs, stage duration exceeding threshold, `corrupted_count > 0`, repository data older than seven days or missing freshness observations.
 
 ## 8. Failure Modes & Recovery
 
@@ -315,16 +318,16 @@ This is the honest baseline.
 
 Total is ~$620–700/mo, Airflow (MWAA) + Snowflake dominated.
 Decomposition:
-- Airflow: ~$350. MWAA, managed, effortless high availability (demo uses self-managed Docker on free-tier EC2 t3.micro).
+- Airflow: ~$350. MWAA, managed, effortless high availability (demo uses self-managed Docker on free-tier EC2 t3.medium).
 - Snowflake compute: ~$220–260 / month. Computation: X-Small = ~$2/hr, auto-suspend after 1 min; hourly Silver `MERGE` + dbt Gold = 5–10 min active/run; reads served from Query Result Cache.
-- Spark: ~$30–60 amortized. EMR transient / Serverless, not kept hot; backfill + occasional heavy compaction only; hourly increment is light.
+- Spark: ~$30–60 amortized. EMR Serverless on every incremental and backfill run, including empty increments; not kept hot.
 - Snowflake storage: ~$10–25. Silver + Gold compressed, ~1 yr accumulation ~100–300 GB @ ~$23–40/TB-mo.
 - CloudWatch: ~$5. Per-stage metrics + a handful of alarms.
 - S3: ~$1–2. Bronze + artifacts. 2.5 GB/day raw × 7-day lifecycle = 18 GB resident + parquet artifacts; ~250 PUT/day of ~10 MB objects; intra-region reads free.
 
 Cost risks:
 - Cost scales roughly with data volume / repo count; at ~50%/yr growth Snowflake compute grows fastest, so it is the lever to watch — keep the warehouse small and suspended.
-- Spark is the one component that can silently drain the budget if a cluster is left hot; it runs transiently for backfill + compaction only, never as a standing cluster.
+- Spark runs transiently on every incremental and backfill run; leaving compute hot can drain the budget.
 - The demo runs at MVP scale, so actual spend stays ~$0, safely under the $10/month AWS budget alert; that guardrail exists to catch runaway Spark, not to cap the target-scale figure.
 `terraform destroy` tears everything down in one command.
 

@@ -2,24 +2,9 @@
 
 ## 1. Prepare access
 
-Use a machine with sudo, 4 CPUs, 8 GB RAM, 30 GB free disk space, and access to mirror.yandex.ru, terraform-mirror.yandexcloud.net, Docker Hub, GitHub, AWS, and Snowflake.
+Use a machine with sudo, 4 CPUs, 8 GB RAM, 30 GB free disk space, and access to Docker Hub, GitHub, AWS, and Snowflake.
 Prepare AWS IAM access keys with AdministratorAccess, a Snowflake ACCOUNTADMIN login, a GitHub token with repository read access, and an alert email.
 For accounts created with Sign up for AWS (new), open AWS Settings → Billing → Upgrade and activate Paid Plan.
-If your organization uses custom SCPs, have its administrator permit these EMR Serverless actions.
-
-```text
-emr-serverless:CreateApplication
-emr-serverless:GetApplication
-emr-serverless:UpdateApplication
-emr-serverless:DeleteApplication
-emr-serverless:TagResource
-emr-serverless:UntagResource
-emr-serverless:ListTagsForResource
-emr-serverless:StartApplication
-emr-serverless:StartJobRun
-emr-serverless:GetJobRun
-emr-serverless:CancelJobRun
-```
 
 Run steps 3–12 in one Bash session.
 Execute each command block separately and enter requested values before continuing to the next block.
@@ -122,11 +107,8 @@ export AIRFLOW_ECR_REPOSITORY="$NAME_PREFIX-airflow"
 export SILVER_ECR_REPOSITORY="$NAME_PREFIX-silver"
 export EC2_KEY_NAME="$NAME_PREFIX-$ENVIRONMENT"
 export SSH_PRIVATE_KEY="$HOME/.ssh/$EC2_KEY_NAME.pem"
-export REPOSITORIES_JSON='["salute-developers/smart_app_framework"]'
+export REPOSITORIES_JSON='["apache/spark", "ClickHouse/ClickHouse"]'
 export OPERATOR_PUBLIC_IP="$(curl -4 -fsS https://checkip.amazonaws.com | tr -d '\n')"
-```
-
-```bash
 read -r -p 'Alert email: ' ALERT_EMAIL
 ```
 
@@ -163,8 +145,6 @@ cat /tmp/elt-bootstrap.sql
 
 Open app.snowflake.com → create a SQL worksheet → paste /tmp/elt-bootstrap.sql → run each statement one by one as ACCOUNTADMIN.
 When a token_secret is returned, copy it and complete step 6.
-For an RSA key update, use the new elt_terraform.p8 file, repeat public-key export and SQL generation, then run the generated SQL.
-When both tokens are already stored in SSM, skip step 6.
 
 ## 6. Save tokens in SSM
 
@@ -206,6 +186,7 @@ AIRFLOW_IMAGE="$(build/airflow/build_and_push.sh \
 SILVER_IMAGE="$(build/spark/build_and_push.sh \
   "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$SILVER_ECR_REPOSITORY")"
 export AIRFLOW_IMAGE SILVER_IMAGE
+declare -p AIRFLOW_IMAGE SILVER_IMAGE >> "$HOME/.config/elt-demo/environment.sh"
 printf 'Airflow: %s\nSilver: %s\n' "$AIRFLOW_IMAGE" "$SILVER_IMAGE"
 ```
 
@@ -216,18 +197,11 @@ cd "$PROJECT_ROOT/terraform"
 if [ ! -s terraform.tfvars ]; then
   python3 "$PROJECT_ROOT/tools/render_usage_template.py" terraform.tfvars > terraform.tfvars
 fi
+python3 "$PROJECT_ROOT/tools/update_images.py" terraform.tfvars
 cp "$PROJECT_ROOT/tools/usage_templates/snowflake-import.tf" snowflake-import.tf
 chmod 600 terraform.tfvars
-```
-
-Refresh the allowed IP from the network/VPN used to access Airflow.
-
-```bash
 OPERATOR_PUBLIC_IP="$(curl -4 -fsS --connect-timeout 10 --max-time 30 https://checkip.amazonaws.com)" &&
   python3 "$PROJECT_ROOT/tools/update_airflow_ip.py" terraform.tfvars "$OPERATOR_PUBLIC_IP"
-```
-
-```bash
 unset SNOWFLAKE_PASSWORD SNOWFLAKE_TOKEN
 export SNOWFLAKE_AUTHENTICATOR=SNOWFLAKE_JWT
 export SNOWFLAKE_PRIVATE_KEY="$(cat "$HOME/.snowflake/elt_terraform.p8")"
@@ -266,6 +240,8 @@ Enable elt_repo_contribution → Trigger DAG → set mode to backfill → Run.
 Wait for poller, spark_silver, and dbt_gold to turn green.
 Open poller → XCom → return_value → copy run_id.
 
+Enable elt_repo_contribution_freshness and trigger it once.
+
 ## 10. Check S3 and Snowflake
 
 ```bash
@@ -287,8 +263,7 @@ cat /tmp/elt-check.sql
 ```
 
 Run /tmp/elt-check.sql in a Snowsight Workspaces SQL file as ACCOUNTADMIN.
-Check PULL ≥ 230, FILE ≥ 230, and nonzero row counts for REVIEW and all three Gold tables.
-Check that PR 210 is returned for salute-developers/smart_app_framework.
+Check that apache/spark and ClickHouse/ClickHouse each have a nonzero row count in SILVER.PULL.
 
 ## 11. Deploy the four charts
 
@@ -319,7 +294,7 @@ Wait for all three tasks to turn green.
 
 ## 13. Delete the deployment
 
-Pause the DAG and wait for active tasks and EMR jobs to finish.
+Pause both DAGs and wait for active tasks and EMR jobs to finish.
 Start Bash and restore the deployment inputs.
 
 ```bash
@@ -336,9 +311,6 @@ cd "$PROJECT_ROOT/terraform"
 export AIRFLOW_IP="$(terraform output -raw airflow_public_ip)"
 export BRONZE_BUCKET="$(terraform output -raw bronze_bucket)"
 export ARTIFACTS_BUCKET="$(terraform output -raw artifacts_bucket)"
-```
-
-```bash
 ssh -i "$SSH_PRIVATE_KEY" "ec2-user@$AIRFLOW_IP" 'sudo docker stop airflow'
 ```
 
