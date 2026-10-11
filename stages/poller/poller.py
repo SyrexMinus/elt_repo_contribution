@@ -4,10 +4,12 @@ import io
 import json
 import time
 from collections.abc import Iterator, Mapping
+from itertools import chain
 from typing import Any, Literal, Protocol
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pyarrow as arrow
+import requests
 from pyarrow import parquet
 from pydantic import BaseModel, Field
 
@@ -200,168 +202,248 @@ def _poll_and_store_repo_events(
     s3: _S3Client,
     github: _GitHubClient,
 ) -> tuple[list[_ArtifactRecord], int, _PollerState]:
-    watermark = state.last_successful_watermark
-    next_state = state.model_copy(deep=True)
-    artifacts: list[_ArtifactRecord] = []
+    checkpoint = _load_poller_checkpoint(event, repository, state, s3)
+    if checkpoint.completed:
+        return (
+            checkpoint.artifacts,
+            sum(record.pull_request_count for record in checkpoint.artifacts),
+            checkpoint.state,
+        )
     batch: list[bytes] = []
     batch_size = 0
     batch_pulls = 0
-    pull_count = 0
-    stop = False
 
-    for pulls in _iter_github_pages(
-        github_api_url=event.github_api_url,
-        github_token=event.github_token,
-        request_timeout_seconds=event.request_timeout_seconds,
-        repository=repository,
-        endpoint="pulls",
-        entity="pull",
-        github=github,
-    ):
-        for pull in pulls:
+    for pull in _iter_pending_pulls(event, repository, checkpoint, github):
+        cached = checkpoint.state.pull_requests.get(str(pull["number"]))
+        pull_state = _PullRequestState(
+            updated_at=pull["updated_at"],
+            merged=pull.get("merged_at") is not None,
+        )
+        if event.mode == "incremental" and cached == pull_state:
+            checkpoint.pulls.pop(0)
+            continue
+
+        lines = _poll_pull_lines(
+            event,
+            repository,
+            pull,
+            event.mode == "backfill" or not cached or not cached.merged,
+            github,
+        )
+        size = sum(map(len, lines))
+        if batch and batch_size + size > event.batch_max_bytes:
+            _checkpoint_bronze_batch(
+                event, repository, checkpoint, batch, batch_pulls, s3
+            )
+            batch = []
+            batch_size = 0
+            batch_pulls = 0
+
+        batch.extend(lines)
+        batch_size += size
+        batch_pulls += 1
+        checkpoint.state.pull_requests[str(pull["number"])] = pull_state
+        if (
+            checkpoint.state.last_successful_watermark is None
+            or pull["updated_at"] > checkpoint.state.last_successful_watermark
+        ):
+            checkpoint.state.last_successful_watermark = pull["updated_at"]
+        checkpoint.pulls.pop(0)
+        if (
+            batch_pulls >= event.batch_max_pull_requests
+            or batch_size >= event.batch_max_bytes
+        ):
+            _checkpoint_bronze_batch(
+                event, repository, checkpoint, batch, batch_pulls, s3
+            )
+            batch = []
+            batch_size = 0
+            batch_pulls = 0
+
+    checkpoint.completed = True
+    if batch:
+        _checkpoint_bronze_batch(event, repository, checkpoint, batch, batch_pulls, s3)
+    else:
+        _store_poller_checkpoint(event, repository, checkpoint, s3)
+    return (
+        checkpoint.artifacts,
+        sum(record.pull_request_count for record in checkpoint.artifacts),
+        checkpoint.state,
+    )
+
+
+class _PollerCheckpoint(BaseModel):
+    watermark: str | None
+    state: _PollerState
+    next_url: str | None
+    artifacts: list[_ArtifactRecord] = Field(default_factory=list)
+    pulls: list[dict[str, Any]] = Field(default_factory=list)
+    completed: bool = False
+
+
+def _iter_pending_pulls(
+    event: _PollerEvent,
+    repository: str,
+    checkpoint: _PollerCheckpoint,
+    github: _GitHubClient,
+) -> Iterator[dict[str, Any]]:
+    pages = chain(
+        [(checkpoint.pulls, checkpoint.next_url)],
+        _iter_github_pages(
+            event, repository, "pulls", "pull", github, checkpoint.next_url
+        )
+        if checkpoint.next_url
+        else (),
+    )
+    for pulls, next_url in pages:
+        checkpoint.pulls = pulls
+        checkpoint.next_url = next_url
+        while checkpoint.pulls:
+            pull = checkpoint.pulls[0]
             if (
                 event.mode == "incremental"
-                and watermark
-                and pull["updated_at"] < watermark
+                and checkpoint.watermark
+                and pull["updated_at"] < checkpoint.watermark
             ):
-                stop = True
-                break
+                checkpoint.pulls = []
+                checkpoint.next_url = None
+                return
+            yield pull
 
-            cached = next_state.pull_requests.get(str(pull["number"]))
-            pull_state = _PullRequestState(
-                updated_at=pull["updated_at"],
-                merged=pull.get("merged_at") is not None,
-            )
-            if event.mode == "incremental" and cached == pull_state:
-                continue
-            produced_new_snapshot = (
-                event.mode == "backfill" or not cached or not cached.merged
-            )
-            records: list[_BronzeRecord] = [
-                _BronzeRecord(
-                    run_id=event.run_id,
-                    repo=repository,
-                    pr_num=pull["number"],
-                    entity="pull",
-                    payload=pull,
-                    produced_new_snapshot=produced_new_snapshot,
-                )
-            ]
-            if produced_new_snapshot:
-                for entity in ("file", "review"):
-                    endpoint = "files" if entity == "file" else "reviews"
-                    for items in _iter_github_pages(
-                        github_api_url=event.github_api_url,
-                        github_token=event.github_token,
-                        request_timeout_seconds=event.request_timeout_seconds,
-                        repository=repository,
-                        endpoint=f"pulls/{pull['number']}/{endpoint}",
-                        entity=entity,
-                        github=github,
-                    ):
-                        records.extend(
-                            _BronzeRecord(
-                                run_id=event.run_id,
-                                repo=repository,
-                                pr_num=pull["number"],
-                                entity=entity,
-                                payload=payload,
-                            )
-                            for payload in items
-                        )
 
-            lines = [
-                (
-                    record.model_dump_json(
-                        exclude={"produced_new_snapshot"}
-                        if record.entity != "pull"
-                        else None
-                    )
-                    + "\n"
-                ).encode()
-                for record in records
-            ]
-            size = sum(map(len, lines))
-            if batch and (
-                batch_pulls >= event.batch_max_pull_requests
-                or batch_size + size > event.batch_max_bytes
-            ):
-                artifacts.append(
-                    _store_bronze_batch(
-                        run_id=event.run_id,
-                        bronze_bucket=event.bronze_bucket,
-                        repository=repository,
-                        batch_number=len(artifacts),
-                        lines=batch,
-                        pull_request_count=batch_pulls,
-                        s3=s3,
-                    )
-                )
-                batch = []
-                batch_size = 0
-                batch_pulls = 0
-
-            batch.extend(lines)
-            batch_size += size
-            batch_pulls += 1
-            pull_count += 1
-            next_state.pull_requests[str(pull["number"])] = pull_state
-            if (
-                next_state.last_successful_watermark is None
-                or pull["updated_at"] > next_state.last_successful_watermark
-            ):
-                next_state.last_successful_watermark = pull["updated_at"]
-
-        if stop:
-            break
-
-    if batch:
-        artifacts.append(
-            _store_bronze_batch(
-                run_id=event.run_id,
-                bronze_bucket=event.bronze_bucket,
-                repository=repository,
-                batch_number=len(artifacts),
-                lines=batch,
-                pull_request_count=batch_pulls,
-                s3=s3,
-            )
+def _poll_pull_lines(
+    event: _PollerEvent,
+    repository: str,
+    pull: dict[str, Any],
+    produced_new_snapshot: bool,
+    github: _GitHubClient,
+) -> list[bytes]:
+    records = [
+        _BronzeRecord(
+            run_id=event.run_id,
+            repo=repository,
+            pr_num=pull["number"],
+            entity="pull",
+            payload=pull,
+            produced_new_snapshot=produced_new_snapshot,
         )
+    ]
+    if produced_new_snapshot:
+        for entity in ("file", "review"):
+            endpoint = "files" if entity == "file" else "reviews"
+            for items, _ in _iter_github_pages(
+                event, repository, f"pulls/{pull['number']}/{endpoint}", entity, github
+            ):
+                records.extend(
+                    _BronzeRecord(
+                        run_id=event.run_id,
+                        repo=repository,
+                        pr_num=pull["number"],
+                        entity=entity,
+                        payload=payload,
+                    )
+                    for payload in items
+                )
+    return [
+        (
+            record.model_dump_json(
+                exclude={"produced_new_snapshot"} if record.entity != "pull" else None
+            )
+            + "\n"
+        ).encode()
+        for record in records
+    ]
 
-    return artifacts, pull_count, next_state
+
+def _load_poller_checkpoint(
+    event: _PollerEvent,
+    repository: str,
+    state: _PollerState,
+    s3: _S3Client,
+) -> _PollerCheckpoint:
+    try:
+        obj = s3.get_object(
+            Bucket=event.artifacts_bucket,
+            Key=f"poller-checkpoints/{event.run_id}/{repository}.json",
+        )
+    except KeyError:
+        pass
+    except s3.exceptions.NoSuchKey:
+        pass
+    else:
+        return _PollerCheckpoint.model_validate_json(obj["Body"].read())
+    return _PollerCheckpoint(
+        watermark=state.last_successful_watermark,
+        state=state.model_copy(deep=True),
+        next_url=_github_url(event, repository, "pulls", "pull"),
+    )
+
+
+def _checkpoint_bronze_batch(
+    event: _PollerEvent,
+    repository: str,
+    checkpoint: _PollerCheckpoint,
+    batch: list[bytes],
+    batch_pulls: int,
+    s3: _S3Client,
+) -> None:
+    checkpoint.artifacts.append(
+        _store_bronze_batch(
+            run_id=event.run_id,
+            bronze_bucket=event.bronze_bucket,
+            repository=repository,
+            batch_number=len(checkpoint.artifacts),
+            lines=batch,
+            pull_request_count=batch_pulls,
+            s3=s3,
+        )
+    )
+    _store_poller_checkpoint(event, repository, checkpoint, s3)
+
+
+def _store_poller_checkpoint(
+    event: _PollerEvent,
+    repository: str,
+    checkpoint: _PollerCheckpoint,
+    s3: _S3Client,
+) -> None:
+    s3.put_object(
+        Bucket=event.artifacts_bucket,
+        Key=f"poller-checkpoints/{event.run_id}/{repository}.json",
+        Body=checkpoint.model_dump_json().encode(),
+        ContentType="application/json",
+    )
 
 
 def _iter_github_pages(
-    github_api_url: str,
-    github_token: str,
-    request_timeout_seconds: float,
+    event: _PollerEvent,
     repository: str,
     endpoint: str,
     entity: Literal["pull", "file", "review"],
     github: _GitHubClient,
-) -> Iterator[list[dict[str, Any]]]:
-    query = urlencode(
-        {
-            "state": "all",
-            "sort": "updated",
-            "direction": "desc",
-            "per_page": 100,
-        }
-        if entity == "pull"
-        else {"per_page": 100}
-    )
-    url = f"{github_api_url.rstrip('/')}/repos/{repository}/{endpoint}?{query}"
+    url: str | None = None,
+) -> Iterator[tuple[list[dict[str, Any]], str | None]]:
+    url = url or _github_url(event, repository, endpoint, entity)
     headers = {
         "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {github_token}",
+        "Authorization": f"Bearer {event.github_token}",
         "X-GitHub-Api-Version": "2022-11-28",
     }
     while url:
-        reply = github.get(
-            url,
-            headers=headers,
-            timeout=request_timeout_seconds,
-        )
+        for attempt in range(5):
+            try:
+                reply = github.get(
+                    url,
+                    headers=headers,
+                    timeout=event.request_timeout_seconds,
+                )
+            except requests.Timeout:
+                if attempt == 4:
+                    raise
+            else:
+                if reply.status_code not in (500, 502, 503, 504) or attempt == 4:
+                    break
+            time.sleep(10 * 2**attempt)
         if reply.status_code == 429 and "Retry-After" in reply.headers:
             time.sleep(float(reply.headers["Retry-After"]))
             continue
@@ -384,8 +466,23 @@ def _iter_github_pages(
                     query=parse_qs(urlsplit(url).query),
                 )
             )
-        yield reply.json()
-        url = _get_next_page_url(reply.headers.get("Link", ""))
+        next_url = _get_next_page_url(reply.headers.get("Link", ""))
+        yield reply.json(), next_url
+        url = next_url
+
+
+def _github_url(
+    event: _PollerEvent,
+    repository: str,
+    endpoint: str,
+    entity: Literal["pull", "file", "review"],
+) -> str:
+    query = urlencode(
+        {"state": "all", "sort": "updated", "direction": "desc", "per_page": 100}
+        if entity == "pull"
+        else {"per_page": 100}
+    )
+    return f"{event.github_api_url.rstrip('/')}/repos/{repository}/{endpoint}?{query}"
 
 
 def _get_next_page_url(link_header: str) -> str | None:

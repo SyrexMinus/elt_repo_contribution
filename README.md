@@ -196,7 +196,7 @@ fact_review_interactions (PK: repo + pr_num + reviewer)
 ### Idempotency & deduplication
 
 The pipeline is idempotent by featuring:
-- Polling restart reuses the published Bronze manifest and completes its repository checkpoints without re-fetching GitHub or rewriting Bronze.
+- Polling restart reuses the published Bronze batches and completes its repository checkpoints without re-fetching GitHub or rewriting Bronze.
   Replaying an older run preserves checkpoints of a newer run.
 - Spark writes use upsert: `MERGE INTO ... ON <PK> WHEN MATCHED AND s.parse_run_id > t.parse_run_id THEN UPDATE ... WHEN NOT MATCHED THEN INSERT ...`, keeping the invariant 1 entity = 1 latest row.
 - Silver re-runs overwrite `s3://.../{run_id}/silver/` rather than appending.

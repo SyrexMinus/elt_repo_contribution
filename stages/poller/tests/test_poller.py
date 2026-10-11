@@ -512,7 +512,9 @@ class PollerTest(TestCase):
                 state_body = _json_bytes(state)
                 s3 = _S3({(ARTIFACTS_BUCKET, STATE_KEY): state_body})
                 cloudwatch = _CloudWatch()
-                github = _GitHub({(_path("pulls"), 1): reply})
+                github = _GitHub(
+                    {(_path("pulls"), 1): [reply] * 5 if case == "non-200" else reply}
+                )
                 event = _event(
                     run_id=run_id,
                     mode="incremental",
@@ -530,7 +532,12 @@ class PollerTest(TestCase):
                         cloudwatch=cloudwatch,
                     )
 
-                sleep.assert_not_called()
+                self.assertEqual(
+                    sleep.call_args_list,
+                    [call(10), call(20), call(40), call(80)]
+                    if case == "non-200"
+                    else [],
+                )
                 quarantine_key = f"corrupted-artifacts/{run_id}/stage1/output.parquet"
                 records = _artifact_records(
                     s3=s3,
@@ -581,6 +588,163 @@ class PollerTest(TestCase):
                     status="fail",
                     corrupted_count=1,
                 )
+
+    def test_poller_retries_transient_responses_and_timeouts(self) -> None:
+        event = _event("transient-run", "backfill", 1000)
+        github = _GitHub(
+            {
+                (_path("pulls"), 1): [
+                    _Reply({}, status=500),
+                    requests.ConnectTimeout("connection timed out"),
+                    _Reply({}, status=502),
+                    requests.ReadTimeout("response timed out"),
+                    _Reply([_pull(401, "2026-10-11T09:00:00Z")]),
+                ],
+                (_path("pulls/401/files"), 1): [
+                    _Reply({}, status=503),
+                    _Reply({}, status=504),
+                    _Reply([{"filename": "src/app.py"}]),
+                ],
+                (_path("pulls/401/reviews"), 1): _Reply([{"state": "APPROVED"}]),
+            }
+        )
+        s3 = _S3()
+        with patch.object(poller_module.time, "sleep") as sleep:
+            poller(event, s3, github, _CloudWatch())
+
+        self.assertEqual(
+            sleep.call_args_list,
+            [call(10), call(20), call(40), call(80), call(10), call(20)],
+        )
+        self.assertEqual(
+            [record["entity"] for record in _bronze_records(s3, event["run_id"])],
+            ["pull", "file", "review"],
+        )
+
+    def test_poller_resumes_backfill_after_batch_checkpoint_upload_fails(self) -> None:
+        event = _event("backfill-resume", "backfill", 1)
+        event["repositories"] = [REPOSITORY, "apache/spark"]
+        checkpoint_key = f"poller-checkpoints/{event['run_id']}/apache/spark.json"
+        s3 = _S3(failed_put_numbers={(ARTIFACTS_BUCKET, checkpoint_key): 2})
+        pulls_by_repo = {REPOSITORY: [400], "apache/spark": [401, 402, 403]}
+        routes = {}
+        for repo, numbers in pulls_by_repo.items():
+            pull_path = f"/repos/{repo}/pulls"
+            pulls = [_pull(number, "2026-10-11T09:00:00Z") for number in numbers]
+            routes[(pull_path, 1)] = _Reply(
+                pulls[:2],
+                next_url=f"https://api.github.com{pull_path}?per_page=100&page=2"
+                if len(pulls) > 2
+                else None,
+            )
+            if len(pulls) > 2:
+                routes[(pull_path, 2)] = _Reply(pulls[2:])
+            for number in numbers:
+                routes[(f"{pull_path}/{number}/files", 1)] = _Reply(
+                    [{"filename": "src/app.py"}]
+                )
+                routes[(f"{pull_path}/{number}/reviews", 1)] = _Reply(
+                    [{"state": "APPROVED"}]
+                )
+        with self.assertRaises(_UploadFailed):
+            poller(event, s3, _GitHub(routes), _CloudWatch())
+
+        github = _GitHub(
+            {
+                key: reply
+                for key, reply in routes.items()
+                if key[0].startswith("/repos/apache/spark/")
+                and "/401/" not in key[0]
+                and key != ("/repos/apache/spark/pulls", 1)
+            }
+        )
+        poller(event, s3, github, _CloudWatch())
+
+        manifest = _artifact_records(
+            s3, f"pipeline-artifacts/{event['run_id']}/bronze/output.parquet"
+        )
+        self.assertEqual(len(manifest), 4)
+        self.assertEqual(len({record["s3_uri"] for record in manifest}), 4)
+        records = [
+            json.loads(line)
+            for (bucket, _), body in s3.objects.items()
+            if bucket == BRONZE_BUCKET
+            for line in body.splitlines()
+        ]
+        self.assertCountEqual(
+            [
+                (record["repo"], record["pr_num"], record["entity"])
+                for record in records
+            ],
+            [
+                (repo, number, entity)
+                for repo, numbers in pulls_by_repo.items()
+                for number in numbers
+                for entity in ("pull", "file", "review")
+            ],
+        )
+        self.assertEqual(
+            [
+                s3.put_calls.count((BRONZE_BUCKET, record["s3_uri"].split("/", 3)[3]))
+                for record in manifest
+            ],
+            [1, 1, 2, 1],
+        )
+
+        github = _GitHub(routes)
+        result = poller({**event, "run_id": "new-backfill"}, s3, github, _CloudWatch())
+        self.assertEqual(result["pull_requests"], 4)
+        self.assertEqual(len(github.calls), 11)
+
+    def test_poller_resumes_incremental_with_original_watermark(self) -> None:
+        event = _event("incremental-resume", "incremental", 1000)
+        event["batch_max_bytes"] = 512
+        state_body = _json_bytes({"last_successful_watermark": "2026-09-10T00:00:00Z"})
+        s3 = _S3({(ARTIFACTS_BUCKET, STATE_KEY): state_body})
+        routes = {
+            (_path("pulls"), 1): _Reply(
+                [
+                    _pull(number, f"2026-09-{day:02d}T00:00:00Z")
+                    for number, day in ((401, 12), (402, 11), (403, 10), (404, 9))
+                ]
+            )
+        }
+        for number in (401, 402, 403):
+            routes[(_path(f"pulls/{number}/files"), 1)] = _Reply([])
+            routes[(_path(f"pulls/{number}/reviews"), 1)] = _Reply([])
+        github = _GitHub(
+            {
+                **routes,
+                (_path("pulls/403/files"), 1): [requests.ReadTimeout("timed out")] * 5,
+            }
+        )
+        with (
+            patch.object(poller_module.time, "sleep") as sleep,
+            self.assertRaises(requests.ReadTimeout),
+        ):
+            poller(event, s3, github, _CloudWatch())
+        self.assertEqual(sleep.call_args_list, [call(10), call(20), call(40), call(80)])
+        self.assertEqual(s3.objects[(ARTIFACTS_BUCKET, STATE_KEY)], state_body)
+        self.assertEqual(
+            [record["pr_num"] for record in _bronze_records(s3, event["run_id"])],
+            [401],
+        )
+
+        github = _GitHub(
+            {
+                key: reply
+                for key, reply in routes.items()
+                if key[0] != _path("pulls") and "/401/" not in key[0]
+            }
+        )
+        poller(event, s3, github, _CloudWatch())
+        self.assertEqual(
+            [record["pr_num"] for record in _bronze_records(s3, event["run_id"])],
+            [401, 402, 403],
+        )
+        self.assertEqual(
+            _state_artifact(s3)["last_successful_watermark"], "2026-09-12T00:00:00Z"
+        )
 
     def test_poller_preserves_state_when_artifact_upload_fails(self) -> None:
         run_id = "failed-upload-run"
@@ -813,7 +977,7 @@ class _Reply:
 class _GitHub:
     def __init__(
         self,
-        routes: dict[tuple[str, int], _Reply | list[_Reply]],
+        routes: dict[tuple[str, int], _Reply | Exception | list[_Reply | Exception]],
     ) -> None:
         self.routes = {
             key: replies if isinstance(replies, list) else [replies]
@@ -834,7 +998,10 @@ class _GitHub:
         parsed = urlsplit(url)
         query = parse_qs(parsed.query)
         page = int(query["page"][0]) if "page" in query else 1
-        return self.routes[(parsed.path, page)].pop(0)
+        reply = self.routes[(parsed.path, page)].pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
 
 
 class _S3:
@@ -842,9 +1009,12 @@ class _S3:
         self,
         objects: dict[tuple[str, str], bytes] | None = None,
         failed_puts: set[tuple[str, str]] | None = None,
+        failed_put_numbers: dict[tuple[str, str], int] | None = None,
     ) -> None:
         self.objects = dict(objects or {})
         self.failed_puts = set(failed_puts or set())
+        self.failed_put_numbers = dict(failed_put_numbers or {})
+        self.put_calls: list[tuple[str, str]] = []
 
     def get_object(self, Bucket: str, Key: str) -> dict[str, io.BytesIO]:
         return {"Body": io.BytesIO(self.objects[(Bucket, Key)])}
@@ -860,7 +1030,10 @@ class _S3:
             body = Body.read()
         except AttributeError:
             body = bytes(Body)
-        if (Bucket, Key) in self.failed_puts:
+        self.put_calls.append((Bucket, Key))
+        if (Bucket, Key) in self.failed_puts or self.put_calls.count(
+            (Bucket, Key)
+        ) == self.failed_put_numbers.get((Bucket, Key)):
             raise _UploadFailed(f"failed to upload s3://{Bucket}/{Key}")
         self.objects[(Bucket, Key)] = body
 
