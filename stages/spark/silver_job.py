@@ -459,7 +459,13 @@ def _merge_tables(
                     how="left",
                 ).fillna({"produced_new_snapshot": False})
                 columns = [*columns, "produced_new_snapshot"]
-            frame.select(
+            frame.sortWithinPartitions(
+                *{
+                    "pull": ["repo", "state", "merged_at"],
+                    "file": ["repo", "pr_num", "filename"],
+                    "review": ["repo", "pr_num", "state"],
+                }[table]
+            ).select(
                 *[
                     functions.col(column).alias(column.upper())
                     for column in columns

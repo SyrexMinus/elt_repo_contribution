@@ -8,9 +8,10 @@ resource "snowflake_schema" "silver" {
 }
 
 resource "snowflake_table" "pull" {
-  database = snowflake_database.this.name
-  schema   = snowflake_schema.silver.name
-  name     = "PULL"
+  database   = snowflake_database.this.name
+  schema     = snowflake_schema.silver.name
+  name       = "PULL"
+  cluster_by = ["REPO", "STATE", "MERGED_AT"]
 
   column {
     name = "REPO"
@@ -51,9 +52,10 @@ resource "snowflake_table" "pull" {
 }
 
 resource "snowflake_table" "file" {
-  database = snowflake_database.this.name
-  schema   = snowflake_schema.silver.name
-  name     = "FILE"
+  database   = snowflake_database.this.name
+  schema     = snowflake_schema.silver.name
+  name       = "FILE"
+  cluster_by = ["REPO", "PR_NUM", "FILENAME"]
 
   column {
     name = "REPO"
@@ -82,9 +84,10 @@ resource "snowflake_table" "file" {
 }
 
 resource "snowflake_table" "review" {
-  database = snowflake_database.this.name
-  schema   = snowflake_schema.silver.name
-  name     = "REVIEW"
+  database   = snowflake_database.this.name
+  schema     = snowflake_schema.silver.name
+  name       = "REVIEW"
+  cluster_by = ["REPO", "PR_NUM", "STATE"]
 
   column {
     name = "REPO"
