@@ -128,7 +128,10 @@ Data layers according to medallion framework:
 
 ### Orchestration & stage handoff
 
-Airflow DAG runs hourly.
+Airflow DAG runs hourly and presented in Airflow UI as in the Figure below.
+
+![Airflow DAG in UI](./docs/pics/airflow_ui.jpg)
+
 XCom passes S3 paths to Bronze manifests and Silver row-count summaries (`pipeline-artifacts/{run_id}/{stage}/output.parquet`).
 Bronze records live in S3 JSONL batches; Silver and Gold tables live in Snowflake, and dbt reads Silver directly.
 
@@ -207,24 +210,14 @@ The pipeline is idempotent by featuring:
 Each mart answers a maintainer question.
 Streamlit renders the marts with repository, merge-time window, and max_users filters based on dbt-computed fact tables.
 
-### 6.1 Time-to-ship per author
-
-Question of the mart: who experiences slow merges, and how bad is the tail?
-Presentation: grouped bar chart.
-Source fact: [GOLD.fact_time_to_ship](#shipping-time-fact).
-
-Rendered mart schema, one row per author:
-
-```text
-time_to_ship_per_author (PK: user_login)
-  user_login, pr_count, p50_minutes, p75_minutes, p90_minutes
-```
-
-### 6.2 PRs per directory
+### 6.1 PRs per directory
 
 Question of the mart: which areas of the codebase attract the most change?
-Presentation: treemap.
+Presentation: treemap, as shown in Figure below for an example of hashicorp/terraform repo for a max depth level 5.
+The Figure also shows that the streamlit dashboard is a part of Snowflake UI.
 Source fact: [GOLD.fact_pr_directory](#pr-directory-fact).
+
+![PRs per directory diagram in Snowflake UI](./docs/pics/prs_per_dir_in_snowflake.jpg)
 
 Rendered mart schema, one row per directory:
 
@@ -236,11 +229,30 @@ pr_count_per_directory (PK: dir)
 A PR touching N directories counts in each -- intended (it genuinely touched N areas).
 The shared `max_nest_level` control limits directory depth in both directory charts (default: 5).
 
+### 6.2 Review interactions
+
+Question: who reviews whom? Surfaces review-load concentration / single-reviewer risk.
+Presentation: Sankey diagram, as shown in the Figure below for an example of hashicorp/terraform repo for max displayed users 10.
+Source fact: [GOLD.fact_review_interactions](#review-interactions-fact).
+
+![Review interactions diagram](./docs/pics/review_interactions.jpg)
+
+Rendered mart schema, one row per author and reviewer:
+
+```text
+approved_review_count_by_author_and_reviewer (PK: author + reviewer)
+  author, reviewer, approved_pr_count
+```
+
+The chart keeps the top authors and reviewers separately by approved interaction count.
+
 ### 6.3 Author share of PRs & diff per directory
 
 Question of the mart: who owns the churn in each area? Concentration is a bus-factor signal.
-Presentation: grouped bar chart with a table.
+Presentation: grouped bar chart with a table, as shown in the Figure below for an example of hashicorp/terraform repo for max displayed users 10 and all directories.
 Source fact: [GOLD.fact_pr_directory](#pr-directory-fact).
+
+![Author share diagram](./docs/pics/author_share.jpg)
 
 Rendered mart schema, one row per directory and author:
 
@@ -255,20 +267,20 @@ PR counts and changed lines are summed before computing the shares, preserving d
 
 For better visualization, mart's frontend does not show child rows of 100%-ownership dirs.
 
-### 6.4 Review interactions
+### 6.4 Time-to-ship per author
 
-Question: who reviews whom? Surfaces review-load concentration / single-reviewer risk.
-Presentation: Sankey diagram.
-Source fact: [GOLD.fact_review_interactions](#review-interactions-fact).
+Question of the mart: who experiences slow merges, and how bad is the tail?
+Presentation: grouped bar chart, as shown in the Figure below for an example of hashicorp/terraform repo for max displayed users 10.
+Source fact: [GOLD.fact_time_to_ship](#shipping-time-fact).
 
-Rendered mart schema, one row per author and reviewer:
+![Time to ship diagram](./docs/pics/time_to_ship.jpg)
+
+Rendered mart schema, one row per author:
 
 ```text
-approved_review_count_by_author_and_reviewer (PK: author + reviewer)
-  author, reviewer, approved_pr_count
+time_to_ship_per_author (PK: user_login)
+  user_login, pr_count, p50_minutes, p75_minutes, p90_minutes
 ```
-
-The chart keeps the top authors and reviewers separately by approved interaction count.
 
 ## 7. Data Quality & Observability
 
@@ -295,6 +307,9 @@ Metrics are: `job_start_count`, `inflight_job_count`, `job_duration`, `job_finis
 Freshness publishes `data_freshness_stale` (`0` / `1`) with `stage = silver` and `repo` dimensions.
 
 Alerts are: failed stage runs, stage duration exceeding threshold, `corrupted_count > 0`, repository data older than seven days or missing freshness observations.
+Figure below shows the alerts list in AWS interface.
+
+![Alarms list in AWS UI](./docs/pics/alarms.jpg)
 
 ## 8. Failure Modes & Recovery
 
@@ -321,7 +336,29 @@ This is the honest baseline.
 
 ### Demo
 
-~$3 and 48 hours for a backfill and $1 per day for always-on host.
+~$3 and 48 hours for a backfill of the 2 repos and $1.3 per day for always-on host.
+Figure below shows dynamics and breakdown of my demo costs in AWS, Snowflake was used for a free trial.
+
+![Demo AWS cost dynamics and breakdown](./docs/pics/aws_cost.jpg)
+
+Total size of demo artifacts in S3 was 8.2 GB: 7.8 for bronze (6.6 for Clickhouse repo, 1.2 for Terraform repo), 0.2 for DAG artifacts, 0.2 for Logs.
+
+The total size of the Snowflake tables was 67 MB, and the breakdown to rows per repo is in the table below.
+
+| TABLE_NAME                      | REPO                    | ROW_COUNT   |
+|---------------------------------|-------------------------|-------------|
+| GOLD.FACT_PR_DIRECTORY          | ClickHouse/ClickHouse   | 890167      |
+| GOLD.FACT_PR_DIRECTORY          | hashicorp/terraform     | 151472      |
+| GOLD.FACT_REVIEW_INTERACTIONS   | ClickHouse/ClickHouse   | 62340       |
+| GOLD.FACT_REVIEW_INTERACTIONS   | hashicorp/terraform     | 11390       |
+| GOLD.FACT_TIME_TO_SHIP          | ClickHouse/ClickHouse   | 75821       |
+| GOLD.FACT_TIME_TO_SHIP          | hashicorp/terraform     | 13871       |
+| SILVER.FILE                     | ClickHouse/ClickHouse   | 1072952     |
+| SILVER.FILE                     | hashicorp/terraform     | 217561      |
+| SILVER.PULL                     | ClickHouse/ClickHouse   | 92384       |
+| SILVER.PULL                     | hashicorp/terraform     | 17066       |
+| SILVER.REVIEW                   | ClickHouse/ClickHouse   | 71798       |
+| SILVER.REVIEW                   | hashicorp/terraform     | 12129       |
 
 ### Target-scale
 
