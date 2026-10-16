@@ -36,9 +36,11 @@
 */
 with parameters as (
     select
-        'salute-developers/smart_app_framework' as repo,
+        'ClickHouse/ClickHouse' as repo,
         '2022-01-01'::timestamp_ntz as merged_from,
         '2026-10-09'::timestamp_ntz as merged_until,
+        5 as max_nest_level,
+        20 as max_users,
         0 as min_diff,
         null::number as max_diff
 ),
@@ -54,6 +56,7 @@ scoped_directories as (
     where facts.repo = parameters.repo
       and facts.merged_at >= parameters.merged_from
       and facts.merged_at < dateadd(day, 1, parameters.merged_until::date)
+      and facts.nest_level <= parameters.max_nest_level
       and facts.nest_level = iff(
           facts.dir = '.', 1, array_size(split(facts.dir, '/'))
       )
@@ -86,6 +89,27 @@ directory_totals as (
         sum(user_pr_count) over (partition by dir) as total_pr_count,
         sum(user_diff) over (partition by dir) as total_diff
     from author_totals
+),
+ranked_authors as (
+    select
+        *,
+        row_number() over (
+            partition by dir
+            order by user_pr_count desc, lower(user_login), user_login
+        ) as user_rank
+    from directory_totals
+),
+grouped_directory_totals as (
+    select
+        dir,
+        iff(user_rank <= parameters.max_users, user_login, 'others') as user_login,
+        sum(user_pr_count) as user_pr_count,
+        max(total_pr_count) as total_pr_count,
+        sum(user_diff) as user_diff,
+        max(total_diff) as total_diff
+    from ranked_authors
+    cross join parameters
+    group by 1, 2
 )
 select
     dir,
@@ -96,7 +120,7 @@ select
     user_diff / nullif(total_diff, 0) as diff_share,
     user_diff,
     total_diff
-from directory_totals as directory
+from grouped_directory_totals as directory
 where not exists (
     select 1
     from directory_totals as ancestor

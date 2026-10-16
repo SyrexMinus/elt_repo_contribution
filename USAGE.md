@@ -92,6 +92,7 @@ printf '%s\n' '/terraform/terraform.tfvars' '/terraform/terraform.tfstate' \
 
 In app.snowflake.com, open account details and copy the organization-account identifier without https:// or .snowflakecomputing.com.
 Enter that identifier and your alert email at the prompts.
+A backfill on demo setup with REPOSITORIES_JSON='["ClickHouse/ClickHouse", "hashicorp/terraform"]' would take around 48 hours and consume $3 in AWS.
 
 ```bash
 export AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
@@ -107,7 +108,7 @@ export AIRFLOW_ECR_REPOSITORY="$NAME_PREFIX-airflow"
 export SILVER_ECR_REPOSITORY="$NAME_PREFIX-silver"
 export EC2_KEY_NAME="$NAME_PREFIX-$ENVIRONMENT"
 export SSH_PRIVATE_KEY="$HOME/.ssh/$EC2_KEY_NAME.pem"
-export REPOSITORIES_JSON='["apache/spark", "ClickHouse/ClickHouse"]'
+export REPOSITORIES_JSON='["ClickHouse/ClickHouse", "hashicorp/terraform"]'
 export OPERATOR_PUBLIC_IP="$(curl -4 -fsS https://checkip.amazonaws.com | tr -d '\n')"
 read -r -p 'Alert email: ' ALERT_EMAIL
 ```
@@ -152,11 +153,6 @@ When a token_secret is returned, copy it and complete step 6.
 read -r -s -p 'Snowflake runtime token_secret: ' SNOWFLAKE_RUNTIME_TOKEN
 ```
 
-```bash
-printf '%s' "$SNOWFLAKE_RUNTIME_TOKEN" > "$HOME/.snowflake/elt_runtime_token"
-unset SNOWFLAKE_RUNTIME_TOKEN
-```
-
 Create a GitHub token at github.com/settings/personal-access-tokens with Pull requests read access to the selected repositories.
 Enter that token and the Snowflake token_secret.
 
@@ -165,6 +161,8 @@ read -r -s -p 'GitHub pipeline token: ' GITHUB_TOKEN
 ```
 
 ```bash
+printf '%s' "$SNOWFLAKE_RUNTIME_TOKEN" > "$HOME/.snowflake/elt_runtime_token"
+unset SNOWFLAKE_RUNTIME_TOKEN
 printf '%s' "$GITHUB_TOKEN" > "$HOME/.github/token"
 unset GITHUB_TOKEN
 
@@ -263,7 +261,7 @@ cat /tmp/elt-check.sql
 ```
 
 Run /tmp/elt-check.sql in a Snowsight Workspaces SQL file as ACCOUNTADMIN.
-Check that apache/spark and ClickHouse/ClickHouse each have a nonzero row count in SILVER.PULL.
+Check that ClickHouse/ClickHouse and hashicorp/terraform each have a nonzero row count in SILVER.PULL.
 
 ## 11. Deploy the four charts
 
@@ -285,6 +283,12 @@ fi
 
 In Snowsight, open Projects → Streamlit → REPO_CONTRIBUTION.
 Select the repository and set merged_from and merged_until for all charts, then press refresh button.
+Set the shared max_nest_level to limit directory depth in both directory charts (default: 5).
+Set the shared max_users to limit named users in Review interactions, Author share of PRs and diff, and Time to ship per author (default: 20).
+Remaining users appear in an additional others group, preserving counts and changed lines.
+Review interactions ranks authors and reviewers separately by approved interaction count.
+The author panels rank by PR count, separately per directory for author-share.
+Time to ship recomputes the others percentiles from the original PRs of the grouped authors.
 Inspect the charts.
 
 ## 12. Run an increment

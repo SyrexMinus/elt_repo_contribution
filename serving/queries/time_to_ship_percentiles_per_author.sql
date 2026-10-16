@@ -26,9 +26,34 @@
 */
 with parameters as (
     select
-        'salute-developers/smart_app_framework' as repo,
+        'ClickHouse/ClickHouse' as repo,
         '2022-01-01'::timestamp_ntz as merged_from,
-        '2026-10-09'::timestamp_ntz as merged_until
+        '2026-10-09'::timestamp_ntz as merged_until,
+        20 as max_users
+),
+scoped_pulls as (
+    select user_login, time_to_ship_minutes
+    from GOLD.fact_time_to_ship as facts
+    cross join parameters
+    where facts.repo = parameters.repo
+      and facts.merged_at >= parameters.merged_from
+      and facts.merged_at < dateadd(day, 1, parameters.merged_until::date)
+),
+top_authors as (
+    select user_login
+    from scoped_pulls
+    cross join parameters
+    group by user_login, parameters.max_users
+    qualify row_number() over (
+        order by count(*) desc, lower(user_login), user_login
+    ) <= parameters.max_users
+),
+grouped_pulls as (
+    select
+        coalesce(top_authors.user_login, 'others') as user_login,
+        scoped_pulls.time_to_ship_minutes
+    from scoped_pulls
+    left join top_authors on top_authors.user_login = scoped_pulls.user_login
 )
 select
     user_login,
@@ -39,10 +64,6 @@ select
         as p75_minutes,
     percentile_disc(0.90) within group (order by time_to_ship_minutes)
         as p90_minutes
-from GOLD.fact_time_to_ship as facts
-cross join parameters
-where facts.repo = parameters.repo
-  and facts.merged_at >= parameters.merged_from
-  and facts.merged_at < dateadd(day, 1, parameters.merged_until::date)
+from grouped_pulls
 group by user_login
 order by p75_minutes desc, user_login;

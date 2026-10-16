@@ -6,9 +6,10 @@
 */
 with parameters as (
     select
-        'salute-developers/smart_app_framework' as repo,
+        'ClickHouse/ClickHouse' as repo,
         '2022-01-01'::timestamp_ntz as merged_from,
-        '2026-10-09'::timestamp_ntz as merged_until
+        '2026-10-09'::timestamp_ntz as merged_until,
+        5 as max_nest_level
 ),
 scoped_directories as (
     select facts.pr_num, facts.dir
@@ -17,6 +18,7 @@ scoped_directories as (
     where facts.repo = parameters.repo
       and facts.merged_at >= parameters.merged_from
       and facts.merged_at < dateadd(day, 1, parameters.merged_until::date)
+      and facts.nest_level <= parameters.max_nest_level
       and facts.nest_level = iff(
           facts.dir = '.', 1, array_size(split(facts.dir, '/'))
       )

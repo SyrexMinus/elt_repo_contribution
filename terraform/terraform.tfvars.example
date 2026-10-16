@@ -2,7 +2,7 @@ aws_region  = "eu-central-1"
 environment = "demo"
 name_prefix = "elt-repo-contribution"
 
-repositories      = ["apache/spark", "ClickHouse/ClickHouse"]
+repositories      = ["ClickHouse/ClickHouse", "hashicorp/terraform"]
 ingestion_cadence = "0 */6 * * *" # 6h
 
 bronze_retention_days = 7

@@ -180,7 +180,7 @@ class SilverJobTest(TestCase):
 
     def test_silver_merges_valid_rows(self) -> None:
         bronze_recs = [
-            _record(entity="pull", payload=_pull_payload()),
+            _record(entity="pull", payload={**_pull_payload(), "user": None}),
             _record(
                 entity="file",
                 payload={"filename": "src/job.py", "additions": 53, "deletions": 1},
@@ -191,6 +191,14 @@ class SilverJobTest(TestCase):
                     "state": "APPROVED",
                     "submitted_at": "2026-09-15T11:00:00Z",
                     "user": {"login": "reviewer"},
+                },
+            ),
+            _record(
+                entity="review",
+                payload={
+                    "state": "COMMENTED",
+                    "submitted_at": "2026-09-15T12:00:00Z",
+                    "user": None,
                 },
             ),
         ]
@@ -220,6 +228,17 @@ class SilverJobTest(TestCase):
                     ssm=ssm,
                     cloudwatch=_CloudWatch(),
                 )
+                self.assertEqual(
+                    _rows(merge.call_args.kwargs["tables"]["pull"])[0]["user_login"],
+                    "ghost",
+                )
+                self.assertEqual(
+                    {
+                        row["user_login"]: row["state"]
+                        for row in _rows(merge.call_args.kwargs["tables"]["review"])
+                    },
+                    {"ghost": "COMMENTED", "reviewer": "APPROVED"},
+                )
 
         self.assertEqual(result["status"], "success")
         merge.assert_called_once()
@@ -244,6 +263,9 @@ class SilverJobTest(TestCase):
             ],
         )
         self.assertNotIn("sfPassword", event["snowflake_options"])
+        self.assertFalse(
+            any(key.startswith("corrupted-artifacts/") for _, key in s3.objects)
+        )
 
     def test_silver_quarantines_corrupted_rows_before_snowflake_write(self) -> None:
         bronze_recs = [
@@ -269,7 +291,7 @@ class SilverJobTest(TestCase):
                 payload={
                     "state": "APPROVED",
                     "submitted_at": "not-a-timestamp",
-                    "user": {"login": "reviewer"},
+                    "user": None,
                 },
             ),
             _record(

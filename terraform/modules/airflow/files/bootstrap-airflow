@@ -2,7 +2,8 @@
 set -euo pipefail
 
 rm -f /opt/airflow/.bootstrap-complete
-dnf install -y docker iptables-services
+dnf install -y docker iptables-services \
+  https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
 printf 'net.ipv4.ip_forward=1\n' > /etc/sysctl.d/99-pipeline-nat.conf
 sysctl --system >/dev/null
 iptables -t nat -A POSTROUTING -s 10.42.1.0/24 -j MASQUERADE
@@ -18,3 +19,4 @@ chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 mkdir -p /opt/airflow/data /opt/airflow/logs
 chown -R 50000:0 /opt/airflow/data /opt/airflow/logs
 touch /opt/airflow/.bootstrap-complete
+systemctl enable --now amazon-ssm-agent

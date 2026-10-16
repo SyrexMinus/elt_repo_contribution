@@ -245,6 +245,7 @@ def _parse_records(lines: DataFrame) -> DataFrame:
         functions.col("payload").alias("_payload_source"),
         functions.from_json("payload", _PAYLOAD_SCHEMA).alias("payload"),
     )
+    null_user = functions.get_json_object("_payload_source", "$.user").isNull()
     parsed = source.select(
         "raw",
         "entity",
@@ -261,7 +262,9 @@ def _parse_records(lines: DataFrame) -> DataFrame:
         functions.col("payload").alias("_payload"),
         functions.col("payload.merged_at").alias("_merged_at_source"),
         functions.try_to_timestamp("payload.merged_at").alias("merged_at"),
-        functions.col("payload.user.login").alias("user_login"),
+        functions.when(null_user, functions.lit("ghost"))
+        .otherwise(functions.col("payload.user.login"))
+        .alias("user_login"),
         functions.col("payload.state").alias("state"),
         functions.try_to_timestamp("payload.created_at").alias("created_at"),
         functions.try_to_timestamp("payload.updated_at").alias("updated_at"),
@@ -291,13 +294,16 @@ def _parse_records(lines: DataFrame) -> DataFrame:
         & functions.col("_payload_source").isNotNull()
         & functions.col("_payload").isNotNull()
     )
+    valid_user = null_user | (
+        _is_nonempty_string("user_login")
+        & _is_json_string(column="_payload_source", field="login")
+    )
     valid = (
         functions.when(
             functions.col("entity") == "pull",
             common_valid
             & functions.col("produced_new_snapshot").isNotNull()
-            & _is_nonempty_string("user_login")
-            & _is_json_string(column="_payload_source", field="login")
+            & valid_user
             & _is_nonempty_string("state")
             & _is_json_string(column="_payload_source", field="state")
             & _is_nonempty_string("title")
@@ -330,8 +336,7 @@ def _parse_records(lines: DataFrame) -> DataFrame:
         .when(
             functions.col("entity") == "review",
             common_valid
-            & _is_nonempty_string("user_login")
-            & _is_json_string(column="_payload_source", field="login")
+            & valid_user
             & _is_nonempty_string("state")
             & _is_json_string(column="_payload_source", field="state")
             & _is_json_string(column="_payload_source", field="submitted_at")

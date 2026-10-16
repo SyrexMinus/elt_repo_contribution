@@ -46,13 +46,13 @@ Table below shows characteristics of the demo and target scales.
 
 | Dimension                 | Demo                                        | Target scale                            |
 |---------------------------|---------------------------------------------|-----------------------------------------|
-| Repositories              | 2 (`apache/spark`, `ClickHouse/ClickHouse`) | 10 000 repos                            |
+| Repositories              | 2 (`ClickHouse/ClickHouse`, `hashicorp/terraform`) | 10 000 repos                            |
 | Data volume               | single-digit MB/day                         | ~2.5 GB/day raw*                        |
 | Freshness                 | 6h ingestion cadence                        | 1h cadence; SLA: 99% of new data in 24h |
 | Availability (dashboards) | upon request                                | 99% -- not a transactional system       |
 | Consistency               | Eventual; 1 PR = 1 latest-state row         | same                                    |
 | Read load                 | ~10 views/day, effectively no concurrency   | 10 000 managers/day, ~10 RPS peak       |
-| Cost                      | ~$0                                         | explicit & bounded (see Chapter 9)      |
+| Cost                      | ~$3 and 48 hours for a full backfill        | explicit & bounded (see Chapter 9)      |
 | Growth                    | -                                           | ~50%/year in repos/volume               |
 
 *Bronze; ~250 KB/repo/day of raw JSON -- Silver is smaller after field selection
@@ -162,6 +162,7 @@ review (PK: repo + pr_num + user_login)
 ```
 
 All three join on `repo + pr_num`.
+PRs and reviews with a null or missing `user` are stored with `user_login = 'ghost'` (see description of https://github.com/ghost).
 Physical sort order chosen to match marts' query access patterns.
 `parse_run_id` column is used for ingestion run tracking and partial backfilling.
 
@@ -204,7 +205,7 @@ The pipeline is idempotent by featuring:
 ## 6. Analytical Marts
 
 Each mart answers a maintainer question.
-Streamlit renders the marts with repository and merge-time window filters based on dbt-computed fact tables.
+Streamlit renders the marts with repository, merge-time window, and max_users filters based on dbt-computed fact tables.
 
 ### 6.1 Time-to-ship per author
 
@@ -233,6 +234,7 @@ pr_count_per_directory (PK: dir)
 ```
 
 A PR touching N directories counts in each -- intended (it genuinely touched N areas).
+The shared `max_nest_level` control limits directory depth in both directory charts (default: 5).
 
 ### 6.3 Author share of PRs & diff per directory
 
@@ -249,6 +251,7 @@ author_pr_and_diff_share_per_directory (PK: dir + user_login)
 ```
 
 PRs are first filtered by total diff size (guards against giant autogen / mass-delete PRs via `:min_diff` / `:max_diff`).
+PR counts and changed lines are summed before computing the shares, preserving directory totals.
 
 For better visualization, mart's frontend does not show child rows of 100%-ownership dirs.
 
@@ -264,6 +267,8 @@ Rendered mart schema, one row per author and reviewer:
 approved_review_count_by_author_and_reviewer (PK: author + reviewer)
   author, reviewer, approved_pr_count
 ```
+
+The chart keeps the top authors and reviewers separately by approved interaction count.
 
 ## 7. Data Quality & Observability
 
@@ -310,9 +315,13 @@ Recovery scenarios:
 
 ### MVP
 
-Single Python poller + ClickHouse (single node) + SQL views.
+If being implemented with a single Python poller + ClickHouse (single node) + SQL views.
 Effectively ~$0 beyond a tiny always-on host.
 This is the honest baseline.
+
+### Demo
+
+~$3 and 48 hours for a backfill and $1 per day for always-on host.
 
 ### Target-scale
 

@@ -22,13 +22,16 @@ def main():
         )
     ]
     defaults = _parameters(session, queries[0].read_text().split("*/", 1)[1])
+    user_defaults = _parameters(session, queries[1].read_text().split("*/", 1)[1])
     repositories = [
         row["REPO"]
         for row in session.sql(
             "SELECT DISTINCT REPO FROM SILVER.PULL ORDER BY REPO"
         ).collect()
     ]
-    repository, merged_from, merged_until = st.columns([2, 1, 1])
+    repository, merged_from, merged_until, max_nest_level, max_users = st.columns(
+        [2, 1, 1, 1, 1]
+    )
     parameters = {
         "repo": repository.selectbox(
             "Repository",
@@ -49,6 +52,22 @@ def main():
             value=defaults["MERGED_UNTIL"].date(),
             format="YYYY-MM-DD",
             key="merged_until",
+        ),
+        "max_nest_level": max_nest_level.number_input(
+            "max_nest_level",
+            min_value=1,
+            value=int(defaults["MAX_NEST_LEVEL"]),
+            step=1,
+            help="Maximum directory depth shown in directory charts.",
+            key="max_nest_level",
+        ),
+        "max_users": max_users.number_input(
+            "max_users",
+            min_value=1,
+            value=int(user_defaults["MAX_USERS"]),
+            step=1,
+            help="Show the top users in all user charts; group the rest as others.",
+            key="max_users",
         ),
     }
     for query in queries:
@@ -244,7 +263,8 @@ def _query_rows(session, sql, parameters):
         return f"{match[1]}?::{sql_type} as {name}{match[3]}"
 
     sql = re.sub(
-        r"(?m)^([ \t]*)[^\n]+ as (repo|merged_from|merged_until|min_diff|max_diff)(,?)$",
+        r"(?m)^([ \t]*)[^\n]+ as "
+        r"(repo|merged_from|merged_until|min_diff|max_diff|max_nest_level|max_users)(,?)$",
         bind,
         sql,
     )

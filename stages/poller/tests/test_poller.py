@@ -623,10 +623,10 @@ class PollerTest(TestCase):
 
     def test_poller_resumes_backfill_after_batch_checkpoint_upload_fails(self) -> None:
         event = _event("backfill-resume", "backfill", 1)
-        event["repositories"] = [REPOSITORY, "apache/spark"]
-        checkpoint_key = f"poller-checkpoints/{event['run_id']}/apache/spark.json"
+        event["repositories"] = [REPOSITORY, "hashicorp/terraform"]
+        checkpoint_key = f"poller-checkpoints/{event['run_id']}/hashicorp/terraform.json"
         s3 = _S3(failed_put_numbers={(ARTIFACTS_BUCKET, checkpoint_key): 2})
-        pulls_by_repo = {REPOSITORY: [400], "apache/spark": [401, 402, 403]}
+        pulls_by_repo = {REPOSITORY: [400], "hashicorp/terraform": [401, 402, 403]}
         routes = {}
         for repo, numbers in pulls_by_repo.items():
             pull_path = f"/repos/{repo}/pulls"
@@ -653,9 +653,9 @@ class PollerTest(TestCase):
             {
                 key: reply
                 for key, reply in routes.items()
-                if key[0].startswith("/repos/apache/spark/")
+                if key[0].startswith("/repos/hashicorp/terraform/")
                 and "/401/" not in key[0]
-                and key != ("/repos/apache/spark/pulls", 1)
+                and key != ("/repos/hashicorp/terraform/pulls", 1)
             }
         )
         poller(event, s3, github, _CloudWatch())
@@ -806,7 +806,7 @@ class PollerTest(TestCase):
         self,
     ) -> None:
         event = _event("20261011T100000000000Z", "incremental", 1000)
-        event["repositories"] = [REPOSITORY, "apache/spark"]
+        event["repositories"] = [REPOSITORY, "hashicorp/terraform"]
         routes = {}
         for repo in event["repositories"]:
             pull_path = f"/repos/{repo}/pulls"
@@ -817,7 +817,7 @@ class PollerTest(TestCase):
             routes[(f"{pull_path}/401/reviews", 1)] = _Reply(
                 [{"user": {"login": "reviewer"}, "state": "APPROVED"}]
             )
-        s3 = _S3(failed_puts={(ARTIFACTS_BUCKET, "poller-state/apache/spark.json")})
+        s3 = _S3(failed_puts={(ARTIFACTS_BUCKET, "poller-state/hashicorp/terraform.json")})
         with self.assertRaises(_UploadFailed):
             poller(event, s3, _GitHub(routes), _CloudWatch())
 

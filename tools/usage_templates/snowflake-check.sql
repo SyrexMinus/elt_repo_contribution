@@ -11,5 +11,5 @@ UNION ALL SELECT 'GOLD.FACT_REVIEW_INTERACTIONS', COUNT(*) FROM GOLD.FACT_REVIEW
 
 SELECT REPO, COUNT(*) AS row_count
 FROM SILVER.PULL
-WHERE REPO IN ('apache/spark', 'ClickHouse/ClickHouse')
+WHERE REPO IN ('ClickHouse/ClickHouse', 'hashicorp/terraform')
 GROUP BY REPO;
