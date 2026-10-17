@@ -2,7 +2,7 @@ import json
 import os
 import subprocess
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic
 
@@ -45,7 +45,7 @@ def _secret(parameter_env):
 def _run_id(context):
     return (
         context["dag_run"]
-        .run_after.astimezone(timezone.utc)
+        .run_after.astimezone(UTC)
         .strftime("%Y%m%dT%H%M%S%fZ")
     )
 
@@ -211,7 +211,7 @@ def _gold_metrics(cloudwatch, metrics):
 with DAG(
     dag_id="elt_repo_contribution",
     schedule=os.environ.get("INGESTION_CADENCE", "0 */6 * * *"),
-    start_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    start_date=datetime(2026, 1, 1, tzinfo=UTC),
     catchup=False,
     max_active_runs=1,
     params={

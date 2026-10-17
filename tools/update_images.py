@@ -8,7 +8,7 @@ tfvars = tfvars_path.read_text()
 for name in ("airflow_image", "silver_image"):
     tfvars = re.sub(
         rf'(?m)^({name}[ \t]*=[ \t]*)"[^"\n]*"',
-        lambda match: f'{match[1]}"{os.environ[name.upper()]}"',
+        lambda match, name=name: f'{match[1]}"{os.environ[name.upper()]}"',
         tfvars,
     )
 tfvars_path.write_text(tfvars)

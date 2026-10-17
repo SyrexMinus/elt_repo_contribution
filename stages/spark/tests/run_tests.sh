@@ -27,4 +27,4 @@ if [[ "$mode" != "unit" ]]; then
 fi
 
 "${compose[@]}" run --rm --no-deps spark-tests \
-    python3 -m unittest -v "${tests[@]}"
+    python3.12 -m unittest -v "${tests[@]}"

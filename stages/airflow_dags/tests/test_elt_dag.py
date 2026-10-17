@@ -6,7 +6,7 @@ import os
 import subprocess
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, Self
 from unittest import TestCase
@@ -192,7 +192,7 @@ class EltDagTest(TestCase):
             emr_states=["SUCCESS"],
         ) as runtime:
             context = _context(mode="backfill")
-            context["logical_date"] = datetime(2026, 9, 29, tzinfo=timezone.utc)
+            context["logical_date"] = datetime(2026, 9, 29, tzinfo=UTC)
             context["dag_run"].logical_date = context["logical_date"]
             poller_result = elt_dag._poll(**context)
             context["ti"].values["poller"] = poller_result
@@ -423,7 +423,7 @@ def _mock_runtime(
 def _context(mode: str) -> dict[str, Any]:
     return {
         "dag_run": SimpleNamespace(
-            run_after=datetime(2026, 9, 30, 8, 7, 6, 123456, tzinfo=timezone.utc),
+            run_after=datetime(2026, 9, 30, 8, 7, 6, 123456, tzinfo=UTC),
             logical_date=None,
         ),
         "params": {"mode": mode},

@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import subprocess
 import uuid
 from datetime import datetime
@@ -405,6 +406,21 @@ class GoldBuildIntegrationTest(TestCase):
     def _serving_rows(self, filename: str) -> list[dict[str, Any]]:
         sql = Path(SERVING_QUERY_DIR, filename).read_text()
         sql = sql.replace("GOLD.", f"{self.database}.{self.gold_schema}.")
+        sql = re.sub(
+            r"(?s)\bwith parameters as \(.*?\n\)",
+            f"""with parameters as (
+    select
+        '{REPOSITORY}' as repo,
+        '2026-09-01'::timestamp_ntz as merged_from,
+        '2026-09-30'::timestamp_ntz as merged_until,
+        5 as max_nest_level,
+        20 as max_users,
+        0 as min_diff,
+        null::number as max_diff
+)""",
+            sql,
+            count=1,
+        )
         return _query_rows(connection=self.snowflake, sql=sql)
 
     def _run_dbt(

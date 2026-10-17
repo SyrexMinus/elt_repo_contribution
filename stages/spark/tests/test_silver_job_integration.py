@@ -6,7 +6,7 @@ import os
 import uuid
 from collections import Counter
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import TestCase
 
@@ -70,7 +70,7 @@ class SilverJobIntegrationTest(TestCase):
         cls.addClassCleanup(cls.spark.stop)
 
     def test_silver_writes_live_backfill_to_snowflake(self) -> None:
-        started_at = datetime.now(timezone.utc)
+        started_at = datetime.now(UTC)
         initial_run_id = _run_id(started_at)
         snapshot_update_run_id = _run_id(started_at + timedelta(seconds=1))
         cloudwatch = _RecordingCloudWatch(self.cloudwatch_client)

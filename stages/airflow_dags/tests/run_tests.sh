@@ -2,8 +2,8 @@
 set -euo pipefail
 
 venv_dir="stages/airflow_dags/tests/.venv"
-if [[ ! -x "$venv_dir/bin/python" ]]; then
-    python3.12 -m venv "$venv_dir"
+if [[ ! -x "$venv_dir/bin/python3.12" ]]; then
+    python3.12 -m venv --clear "$venv_dir"
 fi
 "$venv_dir/bin/python" -m pip install \
     --quiet \
